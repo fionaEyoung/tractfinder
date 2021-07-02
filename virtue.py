@@ -46,7 +46,6 @@ def grow(image, tumour_mask, brain_mask, lookup=None):
 
     return
 
-
 def ang(azA, polA, azB, polB):
     return np.arccos( sin(polA)*sin(polB)*cos(azA-azB) + cos(polA)*cos(polB) )
 
@@ -113,7 +112,6 @@ def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
 
     return F, V, centroids
 
-
 def load_generic(fname):
     if fname.endswith('.mif'):
         img = load_mrtrix(fname)
@@ -163,9 +161,12 @@ def main():
     if not tumour_vol.shape==dat.shape[:3]:
         raise ValueError("Tumour mask and image must have same voxel space")
 
+    # Voxel grids
     X, Y, Z = np.meshgrid(*[np.arange(i) for i in dat.shape[:3]],
                           copy=False, indexing='ij')
+    # Vector of voxel coordinates
     P = np.array([X.flatten(), Y.flatten(), Z.flatten()])
+    # Image dimensions
     w, l, h = dat.shape[:3]
 
 
@@ -183,7 +184,7 @@ def main():
     Fb, Vb, Cb = surf_from_vol(brain_vol, sigma=2, target_nfaces=3000)
 
     # Tumour surface and face centroids
-    Vt, Ft, _, _ =  measure.marching_cubes(main_tumour, 0, step_size=5)
+    Ft, Vt, Ct = surf_from_vol(main_tumour, sigma=2, target_nfaces=900)
 
     # cpos = [(0.4, -0.07, -0.31), (0.05, -0.13, -0.06), (-0.1, 1, 0.08)]
     # dargs = dict(show_edges=True, color=True)
