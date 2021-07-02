@@ -4,7 +4,7 @@ import sys, os
 import numpy as np
 import nibabel as nib
 import skimage
-from skimage import measure
+from skimage import measure, morphology
 from skimage.filters import gaussian
 from mrtrix3.io import load_mrtrix, save_mrtrix
 import matplotlib.pyplot as plt
@@ -112,6 +112,31 @@ def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
 
     return F, V, centroids
 
+def simplify_vol(vol, convex_hull=True, largest_object=True):
+
+    if not any((convex_hull, largest_object)):
+        raise ValueError("At least one of convex_hull and largest_object options must be true")
+
+    ll = measure.label(vol)
+    cc = measure.regionprops(ll)
+    i = np.argmax([r.area for r in cc])
+    x, y, z  = cc[i].centroid
+
+    if largest_object:
+        out = (ll== (1+i))
+
+    if convex_hull:
+        #convex = morphology.convex_hull_image(largest)
+        out[cc[i].bbox[0]:cc[i].bbox[3],
+                cc[i].bbox[1]:cc[i].bbox[4],
+                cc[i].bbox[2]:cc[i].bbox[5]] = cc[i].convex_image
+        return out, (x, y, z)
+    else:
+        return out, (x, y, z)
+
+
+
+
 def load_generic(fname):
     if fname.endswith('.mif'):
         img = load_mrtrix(fname)
@@ -169,22 +194,14 @@ def main():
     # Image dimensions
     w, l, h = dat.shape[:3]
 
-
     # Largest tumour component
-    ll = measure.label(tumour_vol)
-    cc = measure.regionprops(ll)
-    i = np.argmax([r.area for r in cc])
-    main_tumour = (ll== (1+i))
-    x, y, z  = cc[i].centroid
-    main_tumour[cc[i].bbox[0]:cc[i].bbox[3],
-                cc[i].bbox[1]:cc[i].bbox[4],
-                cc[i].bbox[2]:cc[i].bbox[5]] = cc[i].convex_image
+    tumour_modif, S = simplify_vol(tumour_vol)
 
     # Brain surface and face centroids
     Fb, Vb, Cb = surf_from_vol(brain_vol, sigma=2, target_nfaces=3000)
 
     # Tumour surface and face centroids
-    Ft, Vt, Ct = surf_from_vol(main_tumour, sigma=2, target_nfaces=900)
+    Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=900)
 
     # cpos = [(0.4, -0.07, -0.31), (0.05, -0.13, -0.06), (-0.1, 1, 0.08)]
     # dargs = dict(show_edges=True, color=True)
