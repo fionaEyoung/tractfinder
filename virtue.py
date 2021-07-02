@@ -11,6 +11,27 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pyvista as pv
 
+def c2s(C):
+    assert C.shape[1]==3
+    # r, el, az
+    S = np.zeros(C.shape)
+
+    S[:,0] = np.sqrt(np.sum(C**2, axis=1))
+    S[:,1] = np.arccos(C[:,2]./S[:,0])
+    S[:,2] = np.arctan2(C[:,1], C[:,0])
+
+    return S
+
+def s2c(S):
+    assert S.shape[1]==3
+    # x, y, z
+    C = np.zeros(S.shape)
+
+    C[:,0] = S[:,0] * np.sin(S[:,1]) * np.cos(S[:,2])
+    C[:,1] = S[:,0] * np.sin(S[:,1]) * np.sin(S[:,2])
+    C[:,2] = S[:,0] * np.cos(S[:,1])
+    return C
+
 def grow(image, tumour_mask, brain_mask, lookup=None):
 
     """
@@ -113,7 +134,7 @@ def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
     return F, V, centroids
 
 def simplify_vol(vol, convex_hull=True, largest_object=True):
-
+    # TODO: Docstring
     if not any((convex_hull, largest_object)):
         raise ValueError("At least one of convex_hull and largest_object options must be true")
 
@@ -133,9 +154,6 @@ def simplify_vol(vol, convex_hull=True, largest_object=True):
         return out, (x, y, z)
     else:
         return out, (x, y, z)
-
-
-
 
 def load_generic(fname):
     if fname.endswith('.mif'):
@@ -190,7 +208,7 @@ def main():
     X, Y, Z = np.meshgrid(*[np.arange(i) for i in dat.shape[:3]],
                           copy=False, indexing='ij')
     # Vector of voxel coordinates
-    P = np.array([X.flatten(), Y.flatten(), Z.flatten()])
+    P = np.array([X.flatten(), Y.flatten(), Z.flatten()]).T
     # Image dimensions
     w, l, h = dat.shape[:3]
 
@@ -203,21 +221,21 @@ def main():
     # Tumour surface and face centroids
     Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=900)
 
-    # cpos = [(0.4, -0.07, -0.31), (0.05, -0.13, -0.06), (-0.1, 1, 0.08)]
-    # dargs = dict(show_edges=True, color=True)
-    # p = pv.Plotter(shape=(1, 2))
-    # p.add_mesh(meshb, **dargs)
-    # p.add_text("Original", font_size=24)
-    # p.camera_position = cpos
-    # p.reset_camera()
-    # p.subplot(0, 1)
-    # p.add_mesh(decimated, **dargs)
-    # p.camera_position = cpos
-    # p.reset_camera()
-    # p.link_views()
-    # p.show()
+    # Variables
+    SP = P-S
+    Dp = np.linalg.norm(SP, axis=1)
+    e  = SP / Dp[:, np.newaxis] # Damn you np broadcasting
+    SCb = Cb - S
+    SCt = Ct - S
+    Dbc = np.linalg.norm(SCb, axis=1)
+    Dtc = np.linalg.norm(SCt, axis=1)
 
-    if True:
+
+
+
+
+    # Display testing
+    if False:
         # Display resulting triangular mesh using Matplotlib. This can also be done
         # with mayavi (see skimage.measure.marching_cubes_lewiner docstring).
         fig = plt.figure(figsize=(10, 10))
@@ -240,6 +258,20 @@ def main():
 
         plt.tight_layout()
         plt.show()
+
+        # cpos = [(0.4, -0.07, -0.31), (0.05, -0.13, -0.06), (-0.1, 1, 0.08)]
+        # dargs = dict(show_edges=True, color=True)
+        # p = pv.Plotter(shape=(1, 2))
+        # p.add_mesh(meshb, **dargs)
+        # p.add_text("Original", font_size=24)
+        # p.camera_position = cpos
+        # p.reset_camera()
+        # p.subplot(0, 1)
+        # p.add_mesh(decimated, **dargs)
+        # p.camera_position = cpos
+        # p.reset_camera()
+        # p.link_views()
+        # p.show()
 
 
 if __name__ == '__main__':
