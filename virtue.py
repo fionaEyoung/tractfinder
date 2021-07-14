@@ -273,8 +273,18 @@ def main():
     Dbc = np.linalg.norm(SCb, axis=1)
     Dtc = np.linalg.norm(SCt, axis=1)
 
+    # Spherical angles of vectors from tumour seed to image grid coordinates
+    ELp, AZp = c2s(SP).T # Use transpose to unpack columns
 
+    # Regular grid of spherical angles
+    # TODO: !! MAGIC NUMBER !!
+    n = 400;
+    d_theta = 2*np.pi/n
+    az, pol = np.meshgrid(np.linsapce(-pi, pi, n),
+                          np.linspace(0, pi, n/2),
+                          indexing="ij")
 
+    
 
 
     # Display testing
