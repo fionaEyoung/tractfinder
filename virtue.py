@@ -15,12 +15,12 @@ def c2s(*args):
     # Arguments supplied as single Nx3 array
     if len(args)==1:
         C = args[0]
-        assert C.shape[1]==3
+        assert C.ndim==2 and C.shape[1]==3
         # r, el, az
         S = np.zeros(C.shape)
 
         S[:,0] = np.sqrt(np.sum(C**2, axis=1))
-        S[:,1] = np.arccos(C[:,2]./S[:,0])
+        S[:,1] = np.arccos(C[:,2]/S[:,0])
         S[:,2] = np.arctan2(C[:,1], C[:,0])
 
         return S
@@ -34,19 +34,30 @@ def c2s(*args):
     else:
         raise TypeError("Supply either 1 or 3 inputs")
 
-
 def s2c(*args):
     # Arguments supplied as N*3 array
     if len(args)==1:
         S = args[0]
-        assert S.shape[1]==3
-        # x, y, z
-        C = np.zeros(S.shape)
+        assert S.ndim==2
 
-        C[:,0] = S[:,0] * np.sin(S[:,1]) * np.cos(S[:,2])
-        C[:,1] = S[:,0] * np.sin(S[:,1]) * np.sin(S[:,2])
-        C[:,2] = S[:,0] * np.cos(S[:,1])
-        return C
+        if S.shape[1]==3:
+            # x, y, z
+            C = np.zeros(S.shape)
+
+            C[:,0] = S[:,0] * np.sin(S[:,1]) * np.cos(S[:,2])
+            C[:,1] = S[:,0] * np.sin(S[:,1]) * np.sin(S[:,2])
+            C[:,2] = S[:,0] * np.cos(S[:,1])
+            return C
+        elif S.shape[1]==2:
+            # x, y, z
+            C = np.zeros((S.shape[0],3))
+
+            C[:,0] = np.sin(S[:,0]) * np.cos(S[:,1])
+            C[:,1] = np.sin(S[:,0]) * np.sin(S[:,1])
+            C[:,2] = np.cos(S[:,0])
+            return C
+        else:
+            raise ValueError("Second dimension must have length 2 (if only supplying angles) or 3")
     # Also support only two argumnets (El, Az), assume R=1
     elif len(args)==2:
         El, Az = args
