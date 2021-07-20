@@ -111,7 +111,7 @@ def grow(image, tumour_mask, brain_mask, lookup=None):
     return
 
 def ang(azA, polA, azB, polB):
-    return np.arccos( sin(polA)*sin(polB)*cos(azA-azB) + cos(polA)*cos(polB) )
+    return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
 
 def decimate_surf():
     sphereS = vtkSphereSource()
@@ -228,6 +228,11 @@ def parse_args(args):
                    help="tumour mask image")
     P.add_argument('--brain', type=valid_ext(extensions),
                    help="brain mask image")
+    deform_opts = P.add_mutually_exclusive_group()
+    deform_opts.add_argument('--expon', type=int,
+                   help="decay constant for exponentional deformation")
+    deform_opts.add_argument('--squish', type=float, default=1,
+                   help="squishfactor for linear deformation")
 
     return P.parse_args()
 
@@ -236,24 +241,24 @@ def main():
     args = parse_args(sys.argv[1:])
 
     # Extract image data arrays
-    img, dat = load_generic(args.input)
+    img, _ = load_generic(args.input)
     _, tumour_vol = load_generic(args.tumour)
     _, brain_vol = load_generic(args.brain)
     # TODO check dimensions on images
-    if not brain_vol.shape==dat.shape[:3]:
+    if not brain_vol.shape==img.shape[:3]:
         print(brain_vol.shape)
-        print(dat.shape[:3])
+        print(img.shape[:3])
         raise ValueError("Brain mask and image must have same voxel space")
-    if not tumour_vol.shape==dat.shape[:3]:
+    if not tumour_vol.shape==img.shape[:3]:
         raise ValueError("Tumour mask and image must have same voxel space")
 
     # Voxel grids
-    X, Y, Z = np.meshgrid(*[np.arange(i) for i in dat.shape[:3]],
+    X, Y, Z = np.meshgrid(*[np.arange(i) for i in img.shape[:3]],
                           copy=False, indexing='ij')
     # Vector of voxel coordinates
     P = np.array([X.flatten(), Y.flatten(), Z.flatten()]).T
     # Image dimensions
-    w, l, h = dat.shape[:3]
+    w, l, h = img.shape[:3]
 
     # Largest tumour component
     tumour_modif, S = simplify_vol(tumour_vol)
@@ -274,17 +279,66 @@ def main():
     Dtc = np.linalg.norm(SCt, axis=1)
 
     # Spherical angles of vectors from tumour seed to image grid coordinates
-    ELp, AZp = c2s(SP).T # Use transpose to unpack columns
+    _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
 
     # Regular grid of spherical angles
     # TODO: !! MAGIC NUMBER !!
     n = 400;
     d_theta = 2*np.pi/n
-    az, pol = np.meshgrid(np.linsapce(-pi, pi, n),
-                          np.linspace(0, pi, n/2),
+    az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n),
+                          np.linspace(0, np.pi, int(n/2)),
                           indexing="ij")
 
-    
+    ## Lookup tables for Dh: distance along e from seed to brain surface
+
+    # Spherical angles connecting seed to brain hull centroids
+    _, ELb, AZb = c2s(SCb).T
+
+    # Compute angles between gridded angles and brain hull centroids
+    PHI =  ang(AZb.T, ELb.T, az.flatten(), pol.flatten()).reshape((400,200,-1))
+    # Closest brain hull triangle for each angular interval and lookuptable for
+    # Db for evenly spaced angles
+    distances = Dbc[PHI.argmin(axis=2)]
+
+    # Now find the closest grid angle for each image gridpoint and look up the
+    # value of Db for that gridpoint
+    Db = distances[np.ravel_multi_index([[np.floor(AZp/d_theta)+200],
+                                         [np.floor(ELp/d_theta)]],
+                                        distances.shape )]
+
+    ## Lookup tables for Dt: distance along e from seed to tumour surface
+
+    # Spherical angles connecting seed to tumour surface centroids
+    _, ELt, AZt = c2s(SCt).T
+
+    # Compute angles between gridded angles and tumour surface centroids
+    PHI =  ang(AZt.T, ELt.T, az.flatten(), pol.flatten()).reshape((400,200,-1))
+    # Closest tumour surface triangle for each angular interval and lookuptable for
+    # Dt for evenly spaced angles
+    distances = Dtc[PHI.argmin(axis=2)]
+
+    # Now find the closest grid angle for each image gridpoint and look up the
+    # value of Dt for that gridpoint
+    Dt = distances[np.ravel_multi_index([[np.floor(AZp/d_theta)+200],
+                                         [np.floor(ELp/d_theta)]],
+                                        distances.shape )]
+
+    # Calculate displaced gridpoints
+    if args.expon: # Exponential deformation decay
+        k = exp( -args.expon * ((Dp - Dt)/(Db - Dt)) )
+    else: # Linear deformation decay
+        k = 1 - ((Dp - Dt)/(Db - Dt))
+
+    # Deformation field
+    P_new = P + e * k * Dt * args.squish
+    P_old = P - e * k * Dt * args.squish
+
+    # Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
+    img.data = (np.array([img.vox * P_old, np.ones((min(P_old.shape), 1))])
+                * img.transform.T)[:,:2].reshape(*img.shape, 3)
+    write_mrtri(img, args.output)
+
+
 
 
     # Display testing
