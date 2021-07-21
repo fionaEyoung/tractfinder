@@ -264,10 +264,10 @@ def main():
     tumour_modif, S = simplify_vol(tumour_vol)
 
     # Brain surface and face centroids
-    Fb, Vb, Cb = surf_from_vol(brain_vol, sigma=2, target_nfaces=3000)
+    Fb, Vb, Cb = surf_from_vol(brain_vol, sigma=2, target_nfaces=5000)
 
     # Tumour surface and face centroids
-    Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=900)
+    Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=1000)
 
     # Variables
     SP = P-S
@@ -295,48 +295,50 @@ def main():
     _, ELb, AZb = c2s(SCb).T
 
     # Compute angles between gridded angles and brain hull centroids
-    PHI =  ang(AZb.T, ELb.T, az.flatten(), pol.flatten()).reshape((400,200,-1))
+    PHI =  ang( AZb[None,:], ELb[None,:],
+                az.reshape((-1,1)), pol.reshape((-1,1))
+                ).reshape((400,200,-1))
     # Closest brain hull triangle for each angular interval and lookuptable for
     # Db for evenly spaced angles
     distances = Dbc[PHI.argmin(axis=2)]
-
     # Now find the closest grid angle for each image gridpoint and look up the
     # value of Db for that gridpoint
-    Db = distances[np.ravel_multi_index([[np.floor(AZp/d_theta)+200],
-                                         [np.floor(ELp/d_theta)]],
-                                        distances.shape )]
 
+    Db = distances[np.floor(AZp/d_theta).astype(int)+200,
+                   np.floor(ELp/d_theta).astype(int)].flatten()
     ## Lookup tables for Dt: distance along e from seed to tumour surface
 
     # Spherical angles connecting seed to tumour surface centroids
     _, ELt, AZt = c2s(SCt).T
 
     # Compute angles between gridded angles and tumour surface centroids
-    PHI =  ang(AZt.T, ELt.T, az.flatten(), pol.flatten()).reshape((400,200,-1))
+    PHI =  ang( AZt[None,:], ELt[None,:],
+                az.reshape((-1,1)), pol.reshape((-1,1))
+                ).reshape((400,200,-1))
     # Closest tumour surface triangle for each angular interval and lookuptable for
     # Dt for evenly spaced angles
     distances = Dtc[PHI.argmin(axis=2)]
 
     # Now find the closest grid angle for each image gridpoint and look up the
     # value of Dt for that gridpoint
-    Dt = distances[np.ravel_multi_index([[np.floor(AZp/d_theta)+200],
-                                         [np.floor(ELp/d_theta)]],
-                                        distances.shape )]
+
+    Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
+                   np.floor(ELp/d_theta).astype(int)].flatten()
 
     # Calculate displaced gridpoints
     if args.expon: # Exponential deformation decay
-        k = exp( -args.expon * ((Dp - Dt)/(Db - Dt)) )
+        k = np.exp( -args.expon * ((Dp - Dt)/(Db - Dt)) )
     else: # Linear deformation decay
         k = 1 - ((Dp - Dt)/(Db - Dt))
 
     # Deformation field
-    P_new = P + e * k * Dt * args.squish
-    P_old = P - e * k * Dt * args.squish
+    P_new = P + e * k[:, None] * Dt[:, None] * args.squish
+    P_old = P - e * k[:, None] * Dt[:, None] * args.squish
 
     # Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
-    img.data = (np.array([img.vox * P_old, np.ones((min(P_old.shape), 1))])
-                * img.transform.T)[:,:2].reshape(*img.shape, 3)
-    write_mrtri(img, args.output)
+    img.data = (np.hstack((img.vox * P_old, np.ones((max(P_old.shape), 1))))
+                @ img.transform.T)[:,:3].reshape(*img.shape, 3)
+    save_mrtrix(args.output, img)
 
 
 
