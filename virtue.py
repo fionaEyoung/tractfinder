@@ -75,7 +75,7 @@ def s2c(*args):
         return X, Y, Z
 
 
-def grow(image, tumour_mask, brain_mask, lookup=None):
+def grow(image, tumour_mask, brain_mask, lookup=None, mode='reverse'):
 
     """
     Grow tumour using radial growth algorithm
@@ -91,24 +91,94 @@ def grow(image, tumour_mask, brain_mask, lookup=None):
 
     # TODO: Input checks
 
+    # Voxel grids
+    X, Y, Z = np.meshgrid(*[np.arange(i) for i in image.shape[:3]],
+                          copy=False, indexing='ij')
+    # Vector of voxel coordinates
+    P = np.array([X.flatten(), Y.flatten(), Z.flatten()]).T
+    # Image dimensions
+    w, l, h = img.shape[:3]
 
-    # isosurface from tumour mask
-    # isosurface from brain mask
+    # Largest tumour component
+    tumour_modif, S = simplify_vol(tumour_mask)
 
-    # surface centroids and other parameters
+    # Tumour surface and face centroids
+    Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=1000)
+    # Brain surface and face centroids
+    Fb, Vb, Cb = surf_from_vol(brain_mask, sigma=2, target_nfaces=5000)
 
-    # Dh lookup table
-    # Dt lookup table
+    # Variables
+    SP = P-S
+    Dp = np.linalg.norm(SP, axis=1)
+    e  = SP / Dp[:, np.newaxis] # Damn you np broadcasting
+    SCb = Cb - S
+    SCt = Ct - S
+    Dbc = np.linalg.norm(SCb, axis=1)
+    Dtc = np.linalg.norm(SCt, axis=1)
 
-    # Compute Dh and Dt for each voxel using lookup tables
+    # Spherical angles of vectors from tumour seed to image grid coordinates
+    _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
 
-    # compute k for each voxel
+    # Regular grid of spherical angles
+    # TODO: !! MAGIC NUMBER !!
+    n = 400;
+    d_theta = 2*np.pi/n
+    az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n),
+                          np.linspace(0, np.pi, int(n/2)),
+                          indexing="ij")
 
-    # P_new = P + e*k*Dt * const
+    ## Lookup tables for Dh: distance along e from seed to brain surface
 
-    # Compute deformed image using interpolation
+    # Spherical angles connecting seed to brain hull centroids
+    _, ELb, AZb = c2s(SCb).T
 
-    return
+    # Compute angles between gridded angles and brain hull centroids
+    PHI =  ang( AZb[None,:], ELb[None,:],
+                az.reshape((-1,1)), pol.reshape((-1,1))
+                ).reshape((400,200,-1))
+    # Closest brain hull triangle for each angular interval and lookuptable for
+    # Db for evenly spaced angles
+    distances = Dbc[PHI.argmin(axis=2)]
+    # Now find the closest grid angle for each image gridpoint and look up the
+    # value of Db for that gridpoint
+
+    Db = distances[np.floor(AZp/d_theta).astype(int)+200,
+                   np.floor(ELp/d_theta).astype(int)].flatten()
+    ## Lookup tables for Dt: distance along e from seed to tumour surface
+
+    # Spherical angles connecting seed to tumour surface centroids
+    _, ELt, AZt = c2s(SCt).T
+
+    # Compute angles between gridded angles and tumour surface centroids
+    PHI =  ang( AZt[None,:], ELt[None,:],
+                az.reshape((-1,1)), pol.reshape((-1,1))
+                ).reshape((400,200,-1))
+    # Closest tumour surface triangle for each angular interval and lookuptable for
+    # Dt for evenly spaced angles
+    distances = Dtc[PHI.argmin(axis=2)]
+
+    # Now find the closest grid angle for each image gridpoint and look up the
+    # value of Dt for that gridpoint
+
+    Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
+                   np.floor(ELp/d_theta).astype(int)].flatten()
+
+    # Calculate displacement factor k
+    if args.expon: # Exponential deformation decay
+        k = np.exp( -args.expon * ((Dp - Dt)/(Db - Dt)) )
+    else: # Linear deformation decay
+        k = 1 - ((Dp - Dt)/(Db - Dt))
+
+    # Deformation field
+    if mode == 'reverse':
+        # Return "P_old", or pull-back / reverse deformation warp convention
+        return P - e * k[:, None] * Dt[:, None] * args.squish
+    elif mode == 'forward':
+        # Return "P_new", or forward deformation warp convention
+        return P + e * k[:, None] * Dt[:, None] * args.squish
+    else:
+        raise ValueError(f"Unsupported mode option {mode}")
+    #TODO: return Displacement field option
 
 def ang(azA, polA, azB, polB):
     return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
@@ -252,136 +322,12 @@ def main():
     if not tumour_vol.shape==img.shape[:3]:
         raise ValueError("Tumour mask and image must have same voxel space")
 
-    # Voxel grids
-    X, Y, Z = np.meshgrid(*[np.arange(i) for i in img.shape[:3]],
-                          copy=False, indexing='ij')
-    # Vector of voxel coordinates
-    P = np.array([X.flatten(), Y.flatten(), Z.flatten()]).T
-    # Image dimensions
-    w, l, h = img.shape[:3]
-
-    # Largest tumour component
-    tumour_modif, S = simplify_vol(tumour_vol)
-
-    # Brain surface and face centroids
-    Fb, Vb, Cb = surf_from_vol(brain_vol, sigma=2, target_nfaces=5000)
-
-    # Tumour surface and face centroids
-    Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=1000)
-
-    # Variables
-    SP = P-S
-    Dp = np.linalg.norm(SP, axis=1)
-    e  = SP / Dp[:, np.newaxis] # Damn you np broadcasting
-    SCb = Cb - S
-    SCt = Ct - S
-    Dbc = np.linalg.norm(SCb, axis=1)
-    Dtc = np.linalg.norm(SCt, axis=1)
-
-    # Spherical angles of vectors from tumour seed to image grid coordinates
-    _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
-
-    # Regular grid of spherical angles
-    # TODO: !! MAGIC NUMBER !!
-    n = 400;
-    d_theta = 2*np.pi/n
-    az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n),
-                          np.linspace(0, np.pi, int(n/2)),
-                          indexing="ij")
-
-    ## Lookup tables for Dh: distance along e from seed to brain surface
-
-    # Spherical angles connecting seed to brain hull centroids
-    _, ELb, AZb = c2s(SCb).T
-
-    # Compute angles between gridded angles and brain hull centroids
-    PHI =  ang( AZb[None,:], ELb[None,:],
-                az.reshape((-1,1)), pol.reshape((-1,1))
-                ).reshape((400,200,-1))
-    # Closest brain hull triangle for each angular interval and lookuptable for
-    # Db for evenly spaced angles
-    distances = Dbc[PHI.argmin(axis=2)]
-    # Now find the closest grid angle for each image gridpoint and look up the
-    # value of Db for that gridpoint
-
-    Db = distances[np.floor(AZp/d_theta).astype(int)+200,
-                   np.floor(ELp/d_theta).astype(int)].flatten()
-    ## Lookup tables for Dt: distance along e from seed to tumour surface
-
-    # Spherical angles connecting seed to tumour surface centroids
-    _, ELt, AZt = c2s(SCt).T
-
-    # Compute angles between gridded angles and tumour surface centroids
-    PHI =  ang( AZt[None,:], ELt[None,:],
-                az.reshape((-1,1)), pol.reshape((-1,1))
-                ).reshape((400,200,-1))
-    # Closest tumour surface triangle for each angular interval and lookuptable for
-    # Dt for evenly spaced angles
-    distances = Dtc[PHI.argmin(axis=2)]
-
-    # Now find the closest grid angle for each image gridpoint and look up the
-    # value of Dt for that gridpoint
-
-    Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
-                   np.floor(ELp/d_theta).astype(int)].flatten()
-
-    # Calculate displaced gridpoints
-    if args.expon: # Exponential deformation decay
-        k = np.exp( -args.expon * ((Dp - Dt)/(Db - Dt)) )
-    else: # Linear deformation decay
-        k = 1 - ((Dp - Dt)/(Db - Dt))
-
-    # Deformation field
-    P_new = P + e * k[:, None] * Dt[:, None] * args.squish
-    P_old = P - e * k[:, None] * Dt[:, None] * args.squish
+    D = grow(img, tumour_vol, brain_vol, mode='reverse')
 
     # Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
-    img.data = (np.hstack((img.vox * P_old, np.ones((max(P_old.shape), 1))))
+    img.data = (np.hstack((img.vox * D, np.ones((max(D.shape), 1))))
                 @ img.transform.T)[:,:3].reshape(*img.shape, 3)
     save_mrtrix(args.output, img)
-
-
-
-
-    # Display testing
-    if False:
-        # Display resulting triangular mesh using Matplotlib. This can also be done
-        # with mayavi (see skimage.measure.marching_cubes_lewiner docstring).
-        fig = plt.figure(figsize=(10, 10))
-        ax1 = fig.add_subplot(111, projection='3d')
-
-        # Fancy indexing: `verts[faces]` to generate a collection of triangles
-        b_mesh = Poly3DCollection(Vb[Fb], alpha=0, edgecolors='k', linewidths=0.1)
-        ax1.add_collection3d(b_mesh)
-        t_mesh = Poly3DCollection(Vt[Ft], alpha=0.5, edgecolors='r')
-        ax1.add_collection3d(t_mesh)
-        ax1.scatter(Cb[:,0], Cb[:,1], Cb[:,2], marker='x', s=0.5)
-
-        ax1.set_xlabel("x LR")
-        ax1.set_ylabel("y AP")
-        ax1.set_zlabel("z IS")
-
-        ax1.set_xlim(0, w)  # a = 6 (times two for 2nd ellipsoid)
-        ax1.set_ylim(0, l)  # b = 10
-        ax1.set_zlim(0, h)  # c = 16
-
-        plt.tight_layout()
-        plt.show()
-
-        # cpos = [(0.4, -0.07, -0.31), (0.05, -0.13, -0.06), (-0.1, 1, 0.08)]
-        # dargs = dict(show_edges=True, color=True)
-        # p = pv.Plotter(shape=(1, 2))
-        # p.add_mesh(meshb, **dargs)
-        # p.add_text("Original", font_size=24)
-        # p.camera_position = cpos
-        # p.reset_camera()
-        # p.subplot(0, 1)
-        # p.add_mesh(decimated, **dargs)
-        # p.camera_position = cpos
-        # p.reset_camera()
-        # p.link_views()
-        # p.show()
-
 
 if __name__ == '__main__':
     main()
