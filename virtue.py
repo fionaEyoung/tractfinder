@@ -6,7 +6,7 @@ import nibabel as nib
 import skimage
 from skimage import measure, morphology
 from skimage.filters import gaussian
-from mrtrix3.io import load_mrtrix, save_mrtrix
+from mrtrix3.io.image import load_mrtrix, save_mrtrix, Image
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pyvista as pv
@@ -75,7 +75,11 @@ def s2c(*args):
         return X, Y, Z
 
 
-def grow(image, tumour_mask, brain_mask, lookup=None, mode='reverse'):
+def grow(imshape, tumour_mask, brain_mask,
+         lookup=None,
+         mode='reverse',
+         expon=None,
+         squish=1):
 
     """
     Grow tumour using radial growth algorithm
@@ -92,12 +96,12 @@ def grow(image, tumour_mask, brain_mask, lookup=None, mode='reverse'):
     # TODO: Input checks
 
     # Voxel grids
-    X, Y, Z = np.meshgrid(*[np.arange(i) for i in image.shape[:3]],
+    X, Y, Z = np.meshgrid(*[np.arange(i) for i in imshape[:3]],
                           copy=False, indexing='ij')
     # Vector of voxel coordinates
     P = np.array([X.flatten(), Y.flatten(), Z.flatten()]).T
     # Image dimensions
-    w, l, h = img.shape[:3]
+    w, l, h = imshape[:3]
 
     # Largest tumour component
     tumour_modif, S = simplify_vol(tumour_mask)
@@ -164,18 +168,18 @@ def grow(image, tumour_mask, brain_mask, lookup=None, mode='reverse'):
                    np.floor(ELp/d_theta).astype(int)].flatten()
 
     # Calculate displacement factor k
-    if args.expon: # Exponential deformation decay
-        k = np.exp( -args.expon * ((Dp - Dt)/(Db - Dt)) )
+    if expon: # Exponential deformation decay
+        k = np.exp( -expon * ((Dp - Dt)/(Db - Dt)) )
     else: # Linear deformation decay
         k = 1 - ((Dp - Dt)/(Db - Dt))
 
     # Deformation field
     if mode == 'reverse':
         # Return "P_old", or pull-back / reverse deformation warp convention
-        return P - e * k[:, None] * Dt[:, None] * args.squish
+        return P - e * k[:, None] * Dt[:, None] * squish
     elif mode == 'forward':
         # Return "P_new", or forward deformation warp convention
-        return P + e * k[:, None] * Dt[:, None] * args.squish
+        return P + e * k[:, None] * Dt[:, None] * squish
     else:
         raise ValueError(f"Unsupported mode option {mode}")
     #TODO: return Displacement field option
@@ -268,13 +272,25 @@ def simplify_vol(vol, convex_hull=True, largest_object=True):
     else:
         return out, (x, y, z)
 
-def load_generic(fname):
+def load_generic(fname, voxel_array_only=False):
     if fname.endswith('.mif'):
         img = load_mrtrix(fname)
-        return img, img.data
+        if voxel_array_only:
+            return img.data
+        else:
+            return {'full': img,
+                    'data': img.data,
+                    'voxdims': img.vox,
+                    'transform': img.transform}
     elif fname.endswith('.nii') or fname.endswith('.nii.gz'):
         img = nib.load(fname)
-        return img, img.get_fdata()
+        if voxel_array_only:
+            return img.get_fdata()
+        else:
+            return {'full': img,
+                    'data': img.get_fdata(),
+                    'voxdims': img.header.get_zooms(),
+                    'transform': img.affine}
     else:
         raise ValueError("Invalid file extension: "+fname)
 
@@ -292,16 +308,15 @@ def parse_args(args):
     P = argparse.ArgumentParser()
     P.add_argument('input', type=valid_ext(extensions),
                     help="input filename to be deformed")
-    P.add_argument('output', type=valid_ext(extensions),
+    P.add_argument('output', type=valid_ext(('mif')), # Only supprt write to .mif file
                    help="output filename for deformed image")
     P.add_argument('--tumour', type=valid_ext(extensions),
                    help="tumour mask image")
     P.add_argument('--brain', type=valid_ext(extensions),
                    help="brain mask image")
-    deform_opts = P.add_mutually_exclusive_group()
-    deform_opts.add_argument('--expon', type=int,
+    P.add_argument('--expon', type=int,
                    help="decay constant for exponentional deformation")
-    deform_opts.add_argument('--squish', type=float, default=1,
+    P.add_argument('--squish', type=float, default=1,
                    help="squishfactor for linear deformation")
 
     return P.parse_args()
@@ -311,23 +326,29 @@ def main():
     args = parse_args(sys.argv[1:])
 
     # Extract image data arrays
-    img, _ = load_generic(args.input)
-    _, tumour_vol = load_generic(args.tumour)
-    _, brain_vol = load_generic(args.brain)
+    img = load_generic(args.input)
+    tumour_vol = load_generic(args.tumour, voxel_array_only=True)
+    brain_vol = load_generic(args.brain, voxel_array_only=True)
     # TODO check dimensions on images
-    if not brain_vol.shape==img.shape[:3]:
-        print(brain_vol.shape)
-        print(img.shape[:3])
+    if not brain_vol.shape==img['data'].shape[:3]:
         raise ValueError("Brain mask and image must have same voxel space")
-    if not tumour_vol.shape==img.shape[:3]:
+    if not tumour_vol.shape==img['data'].shape[:3]:
         raise ValueError("Tumour mask and image must have same voxel space")
 
-    D = grow(img, tumour_vol, brain_vol, mode='reverse')
+    # Calculate deformation field from tumour
+    D = grow(img['data'].shape, tumour_vol, brain_vol, mode='reverse', expon=args.expon, squish=args.squish)
 
-    # Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
-    img.data = (np.hstack((img.vox * D, np.ones((max(D.shape), 1))))
-                @ img.transform.T)[:,:3].reshape(*img.shape, 3)
-    save_mrtrix(args.output, img)
+    ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
+
+    # Initialise new Mrtrix3 image with voxel size, transform
+    if isinstance(img['full'], Image):
+        out = Image.empty_as(img['full'])
+    else:
+        out = Image(vox=img['voxdims'], transform=img['transform'])
+
+    out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
+                @ out.transform.T)[:,:3].reshape(*img['data'].shape, 3)
+    save_mrtrix(args.output, out)
 
 if __name__ == '__main__':
     main()
