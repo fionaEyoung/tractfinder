@@ -76,7 +76,8 @@ def s2c(*args):
 
 
 def grow(imshape, tumour_mask, brain_mask,
-         lookup=None,
+         save_lookup=None,
+         Dt=None, Db=None,
          mode='reverse',
          expon=None,
          squish=1):
@@ -103,7 +104,7 @@ def grow(imshape, tumour_mask, brain_mask,
     # Image dimensions
     w, l, h = imshape[:3]
 
-    # Largest tumour component
+    # Largest tumour component and centre point S
     tumour_modif, S = simplify_vol(tumour_mask)
 
     # Tumour surface and face centroids
@@ -120,52 +121,66 @@ def grow(imshape, tumour_mask, brain_mask,
     Dbc = np.linalg.norm(SCb, axis=1)
     Dtc = np.linalg.norm(SCt, axis=1)
 
-    # Spherical angles of vectors from tumour seed to image grid coordinates
-    _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
+    if isinstance(Dt, str):
+        Dt = np.load(Dt)
+    if isinstance(Db, str):
+        Db = np.load(Db)
+    # Otherwise Dt/Db are either not set (so calculate them) or are already npy arrays
 
-    # Regular grid of spherical angles
-    # TODO: !! MAGIC NUMBER !!
-    n = 400;
-    d_theta = 2*np.pi/n
-    az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n),
-                          np.linspace(0, np.pi, int(n/2)),
-                          indexing="ij")
+    if (Dt is None) or (Db is None):
+        # Spherical angles of vectors from tumour seed to image grid coordinates
+        _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
 
-    ## Lookup tables for Dh: distance along e from seed to brain surface
+        # Regular grid of spherical angles
+        # TODO: !! MAGIC NUMBER !!
+        n = 400;
+        d_theta = 2*np.pi/n
+        az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n),
+                              np.linspace(0, np.pi, int(n/2)),
+                              indexing="ij")
 
-    # Spherical angles connecting seed to brain hull centroids
-    _, ELb, AZb = c2s(SCb).T
+        if Db is None:
+            ## Lookup tables for Dh: distance along e from seed to brain surface
 
-    # Compute angles between gridded angles and brain hull centroids
-    PHI =  ang( AZb[None,:], ELb[None,:],
-                az.reshape((-1,1)), pol.reshape((-1,1))
-                ).reshape((400,200,-1))
-    # Closest brain hull triangle for each angular interval and lookuptable for
-    # Db for evenly spaced angles
-    distances = Dbc[PHI.argmin(axis=2)]
-    # Now find the closest grid angle for each image gridpoint and look up the
-    # value of Db for that gridpoint
+            # Spherical angles connecting seed to brain hull centroids
+            _, ELb, AZb = c2s(SCb).T
 
-    Db = distances[np.floor(AZp/d_theta).astype(int)+200,
-                   np.floor(ELp/d_theta).astype(int)].flatten()
-    ## Lookup tables for Dt: distance along e from seed to tumour surface
+            # Compute angles between gridded angles and brain hull centroids
+            PHI =  ang( AZb[None,:], ELb[None,:],
+                        az.reshape((-1,1)), pol.reshape((-1,1))
+                        ).reshape((400,200,-1))
+            # Closest brain hull triangle for each angular interval and lookuptable for
+            # Db for evenly spaced angles
+            distances = Dbc[PHI.argmin(axis=2)]
+            # Now find the closest grid angle for each image gridpoint and look up the
+            # value of Db for that gridpoint
 
-    # Spherical angles connecting seed to tumour surface centroids
-    _, ELt, AZt = c2s(SCt).T
+            Db = distances[np.floor(AZp/d_theta).astype(int)+200,
+                           np.floor(ELp/d_theta).astype(int)].flatten()
+            if save_lookup:
+                np.save(os.path.join(save_lookup, "Db.npy"), Db)
 
-    # Compute angles between gridded angles and tumour surface centroids
-    PHI =  ang( AZt[None,:], ELt[None,:],
-                az.reshape((-1,1)), pol.reshape((-1,1))
-                ).reshape((400,200,-1))
-    # Closest tumour surface triangle for each angular interval and lookuptable for
-    # Dt for evenly spaced angles
-    distances = Dtc[PHI.argmin(axis=2)]
+        if Dt is None:
+            ## Lookup tables for Dt: distance along e from seed to tumour surface
 
-    # Now find the closest grid angle for each image gridpoint and look up the
-    # value of Dt for that gridpoint
+            # Spherical angles connecting seed to tumour surface centroids
+            _, ELt, AZt = c2s(SCt).T
 
-    Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
-                   np.floor(ELp/d_theta).astype(int)].flatten()
+            # Compute angles between gridded angles and tumour surface centroids
+            PHI =  ang( AZt[None,:], ELt[None,:],
+                        az.reshape((-1,1)), pol.reshape((-1,1))
+                        ).reshape((400,200,-1))
+            # Closest tumour surface triangle for each angular interval and lookuptable for
+            # Dt for evenly spaced angles
+            distances = Dtc[PHI.argmin(axis=2)]
+
+            # Now find the closest grid angle for each image gridpoint and look up the
+            # value of Dt for that gridpoint
+
+            Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
+                           np.floor(ELp/d_theta).astype(int)].flatten()
+            if save_lookup:
+                np.save(os.path.join(save_lookup, "Dt.npy"), Dt)
 
     # Calculate displacement factor k
     if expon: # Exponential deformation decay
@@ -305,19 +320,30 @@ def parse_args(args):
         return type_fun
     extensions = ('mif', 'nii', 'nii.gz')
 
+    def valid_path(string):
+        if os.path.isdir(string):
+            return string
+        else:
+            raise argparse.ArgumentTypeError(f"Not a valid directory: {string}")
+
+
     P = argparse.ArgumentParser()
     P.add_argument('input', type=valid_ext(extensions),
                     help="input filename to be deformed")
     P.add_argument('output', type=valid_ext(('mif')), # Only supprt write to .mif file
                    help="output filename for deformed image")
-    P.add_argument('--tumour', type=valid_ext(extensions),
+    P.add_argument('--tumour', '-t', type=valid_ext(extensions),
                    help="tumour mask image")
-    P.add_argument('--brain', type=valid_ext(extensions),
+    P.add_argument('--brain', '-b', type=valid_ext(extensions),
                    help="brain mask image")
     P.add_argument('--expon', type=int,
                    help="decay constant for exponentional deformation")
     P.add_argument('--squish', type=float, default=1,
                    help="squishfactor for linear deformation")
+    P.add_argument('--precomputed', type=valid_path,
+                   help="directory containing precomputed arrays for Dt and Db")
+    P.add_argument('--save', type=str,
+                   help="directory to save arrays Dt and Db for future use")
 
     return P.parse_args()
 
@@ -331,21 +357,36 @@ def main():
     brain_vol = load_generic(args.brain, voxel_array_only=True)
     # TODO check dimensions on images
     if not brain_vol.shape==img['data'].shape[:3]:
-        raise ValueError("Brain mask and image must have same voxel space")
+        raise ValueError(f"""Dimension mismatch.
+                         Brain mask {brain_vol.shape} and
+                         image {img['data'].shape[:3]} must have same voxel space.""")
     if not tumour_vol.shape==img['data'].shape[:3]:
-        raise ValueError("Tumour mask and image must have same voxel space")
+        raise ValueError(f"""Dimension mismatch.
+                         Tumour mask {tumour_vol.shape} and 
+                         image {img['data'].shape[:3]} must have same voxel space.""")
+
+    Dt, Db = (None, None)
+    if args.precomputed:
+        if os.path.exists(os.path.join(args.precomputed, 'Dt.npy')):
+            Dt = os.path.join(args.precomputed, 'Dt.npy')
+        if os.path.exists(os.path.join(args.precomputed, 'Db.npy')):
+            Db = os.path.join(args.precomputed, 'Db.npy')
 
     # Calculate deformation field from tumour
-    D = grow(img['data'].shape, tumour_vol, brain_vol, mode='reverse', expon=args.expon, squish=args.squish)
+    D = grow(img['data'].shape, tumour_vol, brain_vol,
+             mode='reverse', expon=args.expon, squish=args.squish,
+             save_lookup=args.save, Dt=Dt, Db=Db)
 
     ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
 
-    # Initialise new Mrtrix3 image with voxel size, transform
+    # Initialise new Mrtrix3 image with voxel size, transform, and algorithm comments
     if isinstance(img['full'], Image):
         out = Image.empty_as(img['full'])
+        out.comments.extend([f'squish = {args.squish}', f'lambda = {args.expon}'])
     else:
-        out = Image(vox=img['voxdims'], transform=img['transform'])
-
+        out = Image(vox=img['voxdims'], transform=img['transform'],
+                    comments=[f'squish = {args.squish}', f'lambda = {args.expon}'])
+    # Save deformation field data
     out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
                 @ out.transform.T)[:,:3].reshape(*img['data'].shape, 3)
     save_mrtrix(args.output, out)
