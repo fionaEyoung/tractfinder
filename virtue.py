@@ -77,10 +77,10 @@ def s2c(*args):
 
 def grow(imshape, tumour_mask, brain_mask,
          save_lookup=None,
-         Dt=None, Db=None,
+         Dt=None, Db=None, S_override=None,
          mode='reverse',
-         expon=None,
-         squish=1):
+         expon=None, squish=1,
+         v=0):
 
     """
     Grow tumour using radial growth algorithm
@@ -106,6 +106,11 @@ def grow(imshape, tumour_mask, brain_mask,
 
     # Largest tumour component and centre point S
     tumour_modif, S = simplify_vol(tumour_mask)
+    if S_override is not None:
+        S = S_override
+
+    if v > 1:
+        print(f"Tumour seed voxel: {S}")
 
     # Tumour surface and face centroids
     Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=1000)
@@ -128,6 +133,10 @@ def grow(imshape, tumour_mask, brain_mask,
     # Otherwise Dt/Db are either not set (so calculate them) or are already npy arrays
 
     if (Dt is None) or (Db is None):
+
+        if v > 0:
+            print("Computing Dt and Db lookup tables...")
+
         # Spherical angles of vectors from tumour seed to image grid coordinates
         _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
 
@@ -184,8 +193,13 @@ def grow(imshape, tumour_mask, brain_mask,
 
     # Calculate displacement factor k
     if expon: # Exponential deformation decay
+        if v > 0:
+            print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
+                  squishfactor {squish}""")
         k = np.exp( -expon * ((Dp - Dt)/(Db - Dt)) )
     else: # Linear deformation decay
+        if v > 0:
+            print(f"""Computing linear tissue deformation with squishfactor {squish}""")
         k = 1 - ((Dp - Dt)/(Db - Dt))
 
     # Deformation field
@@ -344,12 +358,22 @@ def parse_args(args):
                    help="directory containing precomputed arrays for Dt and Db")
     P.add_argument('--save', type=str,
                    help="directory to save arrays Dt and Db for future use")
+    P.add_argument('--verbosity', '-v', action='count', default=0,
+                   help="Increase output verbosity")
+    P.add_argument('--seed_override', type=str,
+                   help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
+    P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'],
+                   help="Specifiy forward or reverse deformation field convention")
 
     return P.parse_args()
 
 def main():
 
     args = parse_args(sys.argv[1:])
+    if args.seed_override:
+        args.seed_override = np.array(args.seed_override.split(','), dtype=float)
+    if args.save:
+        os.makedirs(args.save, exist_ok=True)
 
     # Extract image data arrays
     img = load_generic(args.input)
@@ -362,7 +386,7 @@ def main():
                          image {img['data'].shape[:3]} must have same voxel space.""")
     if not tumour_vol.shape==img['data'].shape[:3]:
         raise ValueError(f"""Dimension mismatch.
-                         Tumour mask {tumour_vol.shape} and 
+                         Tumour mask {tumour_vol.shape} and
                          image {img['data'].shape[:3]} must have same voxel space.""")
 
     Dt, Db = (None, None)
@@ -374,8 +398,9 @@ def main():
 
     # Calculate deformation field from tumour
     D = grow(img['data'].shape, tumour_vol, brain_vol,
-             mode='reverse', expon=args.expon, squish=args.squish,
-             save_lookup=args.save, Dt=Dt, Db=Db)
+             mode=args.def_mode, expon=args.expon, squish=args.squish,
+             save_lookup=args.save, Dt=Dt, Db=Db, v=args.verbosity,
+             S_override=args.seed_override)
 
     ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
 
