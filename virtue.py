@@ -185,7 +185,6 @@ def grow(imshape, tumour_mask, brain_mask,
 
             # Now find the closest grid angle for each image gridpoint and look up the
             # value of Dt for that gridpoint
-
             Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
                            np.floor(ELp/d_theta).astype(int)].flatten()
             if save_lookup:
@@ -352,9 +351,9 @@ def parse_args(args):
                     help="input filename to be deformed")
     P.add_argument('output', type=valid_ext(('mif')), # Only supprt write to .mif file
                    help="output filename for deformed image")
-    P.add_argument('--tumour', '-t', type=valid_ext(extensions),
+    P.add_argument('--tumour', '-t', type=valid_ext(extensions), required=True,
                    help="tumour mask image")
-    P.add_argument('--brain', '-b', type=valid_ext(extensions),
+    P.add_argument('--brain', '-b', type=valid_ext(extensions), required=True,
                    help="brain mask image")
     P.add_argument('--expon', type=int,
                    help="decay constant for exponentional deformation")
@@ -371,15 +370,21 @@ def parse_args(args):
     P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'], default='reverse',
                    help="Specifiy forward or reverse deformation field convention")
 
-    return P.parse_args()
+    a = P.parse_args(args)
+
+    # Handle arguments
+    if a.def_mode is 'reverse' and a.expon:
+        P.error("Reverse deformation calculation not possible with exponential decay model")
+    if a.seed_override:
+        a.seed_override = np.array(a.seed_override.split(','), dtype=float)
+    if a.save:
+        os.makedirs(a.save, exist_ok=True)
+
+    return a
 
 def main():
 
     args = parse_args(sys.argv[1:])
-    if args.seed_override:
-        args.seed_override = np.array(args.seed_override.split(','), dtype=float)
-    if args.save:
-        os.makedirs(args.save, exist_ok=True)
 
     # Extract image data arrays
     img = load_generic(args.input)
