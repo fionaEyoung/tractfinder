@@ -191,22 +191,53 @@ def grow(imshape, tumour_mask, brain_mask,
             if save_lookup:
                 np.save(os.path.join(save_lookup, "Dt.npy"), Dt)
 
-    # Calculate displacement factor k
-    if expon: # Exponential deformation decay
-        if v > 0:
-            print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
-                  squishfactor {squish}""")
-        k = np.exp( -expon * ((Dp - Dt)/(Db - Dt)) )
-    else: # Linear deformation decay
-        if v > 0:
-            print(f"""Computing linear tissue deformation with squishfactor {squish}""")
-        k = 1 - ((Dp - Dt)/(Db - Dt))
+
 
     # Deformation field
     if mode == 'reverse':
+
+        # Calculate displacement factor k
+        if expon: # Exponential deformation decay
+            if v > 0:
+                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
+                      squishfactor {squish}""")
+            k = np.zeros(Dp.shape)
+            m1 = tumour_modif.flatten().astype(bool)
+            m2 = brain_mask.flatten().astype(bool)
+            # Exponential outside tumour
+            k[~m1] = np.exp( -expon * ((Dp[~m1] - Dt[~m1])/(Db[~m1] - Dt[~m1])) )
+            # Linear inside tumour
+            k[m1] = 1 #- ((Dp[m1] - Dt[m1])/(Db[m1] - Dt[m1]))
+            # Zero outside brain surface
+            k[~m2] = 0
+
+        else: # Linear deformation decay
+            if v > 0:
+                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            k = 1 - ((Dp - Dt)/(Db - Dt))
         # Return "P_old", or pull-back / reverse deformation warp convention
         return P - e * k[:, None] * Dt[:, None] * squish
     elif mode == 'forward':
+        # Calculate displacement factor k
+        if expon: # Exponential deformation decay
+            if v > 0:
+                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
+                      squishfactor {squish}""")
+            k = np.zeros(Dp.shape)
+            m1 = tumour_modif.flatten().astype(bool)
+            m2 = brain_mask.flatten().astype(bool)
+            # Exponential outside tumour
+            #k[~m1] = np.exp( -expon * ((Dp[~m1] - Dt[~m1])/(Db[~m1] - Dt[~m1])) )
+            # Linear inside tumour
+            #k[m1] = 1 #- ((Dp[m1] - Dt[m1])/(Db[m1] - Dt[m1]))
+            # Zero outside brain surface
+            k = np.exp( -expon * ((Dp)/(Db)) )
+            k[~m2] = 0
+
+        else: # Linear deformation decay
+            if v > 0:
+                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            k = 1 - ((Dp - Dt)/(Db - Dt))
         # Return "P_new", or forward deformation warp convention
         return P + e * k[:, None] * Dt[:, None] * squish
     else:
@@ -215,31 +246,6 @@ def grow(imshape, tumour_mask, brain_mask,
 
 def ang(azA, polA, azB, polB):
     return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
-
-def decimate_surf():
-    sphereS = vtkSphereSource()
-    sphereS.Update()
-
-    inputPoly = vtkPolyData()
-    inputPoly.ShallowCopy(sphereS.GetOutput())
-
-    print("Before decimation\n"
-          "-----------------\n"
-          "There are " + str(inputPoly.GetNumberOfPoints()) + "points.\n"
-          "There are " + str(inputPoly.GetNumberOfPolys()) + "polygons.\n")
-
-    decimate = vtkDecimatePro()
-    decimate.SetInputData(inputPoly)
-    decimate.SetTargetReduction(.10)
-    decimate.Update()
-
-    decimatedPoly = vtkPolyData()
-    decimatedPoly.ShallowCopy(decimate.GetOutput())
-
-    print("After decimation \n"
-          "-----------------\n"
-          "There are " + str(decimatedPoly.GetNumberOfPoints()) + "points.\n"
-          "There are " + str(decimatedPoly.GetNumberOfPolys()) + "polygons.\n")
 
 def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
     """
@@ -362,7 +368,7 @@ def parse_args(args):
                    help="Increase output verbosity")
     P.add_argument('--seed_override', type=str,
                    help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
-    P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'],
+    P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'], default='reverse',
                    help="Specifiy forward or reverse deformation field convention")
 
     return P.parse_args()
