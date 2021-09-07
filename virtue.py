@@ -236,7 +236,7 @@ def grow(imshape, tumour_mask, brain_mask,
         else: # Linear deformation decay
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
-            k = 1 - ((Dp - Dt)/(Db - Dt))
+            k = 1 - ((Dp)/(Db))
         # Return "P_new", or forward deformation warp convention
         return P + e * k[:, None] * Dt[:, None] * squish
     else:
@@ -373,7 +373,7 @@ def parse_args(args):
     a = P.parse_args(args)
 
     # Handle arguments
-    if a.def_mode is 'reverse' and a.expon:
+    if a.def_mode=='reverse' and a.expon:
         P.error("Reverse deformation calculation not possible with exponential decay model")
     if a.seed_override:
         a.seed_override = np.array(a.seed_override.split(','), dtype=float)
