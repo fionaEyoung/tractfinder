@@ -10,6 +10,7 @@ from mrtrix3.io.image import load_mrtrix, save_mrtrix, Image
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pyvista as pv
+from scipy.special import lambertw
 
 def c2s(*args):
     # Arguments supplied as single Nx3 array
@@ -93,7 +94,7 @@ def grow(imshape, tumour_mask, brain_mask,
     out: final image with deformation
     lookup: lookup tables for reuse
     """
-
+    strictly_outside = False
     # TODO: Input checks
 
     # Voxel grids
@@ -190,55 +191,61 @@ def grow(imshape, tumour_mask, brain_mask,
             if save_lookup:
                 np.save(os.path.join(save_lookup, "Dt.npy"), Dt)
 
-
-
     # Deformation field
-    if mode == 'reverse':
-
+    m = brain_mask.flatten().astype(bool)
+    m2 = brain_mask.flatten().astype(bool)
+    if mode == 'forward':
         # Calculate displacement factor k
         if expon: # Exponential deformation decay
             if v > 0:
                 print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
                       squishfactor {squish}""")
-            k = np.zeros(Dp.shape)
-            m1 = tumour_modif.flatten().astype(bool)
-            m2 = brain_mask.flatten().astype(bool)
-            # Exponential outside tumour
-            k[~m1] = np.exp( -expon * ((Dp[~m1] - Dt[~m1])/(Db[~m1] - Dt[~m1])) )
-            # Linear inside tumour
-            k[m1] = 1 #- ((Dp[m1] - Dt[m1])/(Db[m1] - Dt[m1]))
-            # Zero outside brain surface
-            k[~m2] = 0
 
+            k = np.zeros(Dp.shape)
+            # Normalisation constant
+            c = np.exp(-expon)/(exp(-expon)-1)
+            k = (1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c
+            k[~m] = 0
+
+        elif strictly_outside:
+            k = np.zeros(Dp.shape)
+            m = brain_mask.flatten().astype(bool)
+            limit = 1 - Dp/Dt
+            # Normalisation constant
+            c = np.exp(-expon)/(np.exp(-expon)-1)
+            k = np.maximum( ((1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c), limit)
+            # Zero outside brain surface
+            k[~m] = 0
         else: # Linear deformation decay
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
-            k = 1 - ((Dp - Dt)/(Db - Dt))
-        # Return "P_old", or pull-back / reverse deformation warp convention
-        return P - e * k[:, None] * Dt[:, None] * squish
-    elif mode == 'forward':
-        # Calculate displacement factor k
-        if expon: # Exponential deformation decay
-            if v > 0:
-                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
-                      squishfactor {squish}""")
-            k = np.zeros(Dp.shape)
-            m1 = tumour_modif.flatten().astype(bool)
-            m2 = brain_mask.flatten().astype(bool)
-            # Exponential outside tumour
-            #k[~m1] = np.exp( -expon * ((Dp[~m1] - Dt[~m1])/(Db[~m1] - Dt[~m1])) )
-            # Linear inside tumour
-            #k[m1] = 1 #- ((Dp[m1] - Dt[m1])/(Db[m1] - Dt[m1]))
-            # Zero outside brain surface
-            k = np.exp( -expon * ((Dp)/(Db)) )
-            k[~m2] = 0
+            k = 1 - (Dp/Db)
 
-        else: # Linear deformation decay
-            if v > 0:
-                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
-            k = 1 - ((Dp - Dt)/(Db - Dt))
         # Return "P_new", or forward deformation warp convention
         return P + e * k[:, None] * Dt[:, None] * squish
+
+    # Return "P_old", or pull-back / reverse deformation warp convention
+    elif mode == 'reverse':
+
+        # Calculate displacement factor k
+        if expon: # Exponential deformation decay
+            print("WARNING: reverse exponential model is not an inaccurate inverse of the forward deformation. Use output with extreme caution.")
+            if v > 0:
+                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
+                      squishfactor {squish}""")
+            k = np.zeros(Dp.shape)
+            k = (Db/expon) * lambertw( (-expon * Dt * exp(-expon*Dp/Db))/Db, k=0 )
+            # Zero outside brain surface
+            k[~m] = 0
+            return P + e * k[:, None] * squish
+
+        else: # Linear deformation decay
+            if v > 0:
+                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            k = 1 - ((Dp - squish*Dt)/(Db - squish*Dt))
+
+            return P - e * k[:, None] * Dt[:, None] * squish
+
     else:
         raise ValueError(f"Unsupported mode option {mode}")
     #TODO: return Displacement field option
