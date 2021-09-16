@@ -80,7 +80,7 @@ def grow(imshape, tumour_mask, brain_mask,
          save_lookup=None,
          Dt=None, Db=None, S_override=None,
          mode='reverse',
-         expon=None, squish=1,
+         expon=None, squish=1, so=False,
          v=0):
 
     """
@@ -94,7 +94,6 @@ def grow(imshape, tumour_mask, brain_mask,
     out: final image with deformation
     lookup: lookup tables for reuse
     """
-    strictly_outside = False
     # TODO: Input checks
 
     # Voxel grids
@@ -196,18 +195,7 @@ def grow(imshape, tumour_mask, brain_mask,
     m2 = brain_mask.flatten().astype(bool)
     if mode == 'forward':
         # Calculate displacement factor k
-        if expon: # Exponential deformation decay
-            if v > 0:
-                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
-                      squishfactor {squish}""")
-
-            k = np.zeros(Dp.shape)
-            # Normalisation constant
-            c = np.exp(-expon)/(exp(-expon)-1)
-            k = (1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c
-            k[~m] = 0
-
-        elif strictly_outside:
+        if so:
             k = np.zeros(Dp.shape)
             m = brain_mask.flatten().astype(bool)
             limit = 1 - Dp/Dt
@@ -215,6 +203,17 @@ def grow(imshape, tumour_mask, brain_mask,
             c = np.exp(-expon)/(np.exp(-expon)-1)
             k = np.maximum( ((1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c), limit)
             # Zero outside brain surface
+            k[~m] = 0
+
+        elif expon: # Exponential deformation decay
+            if v > 0:
+                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
+                      squishfactor {squish}""")
+
+            k = np.zeros(Dp.shape)
+            # Normalisation constant
+            c = np.exp(-expon)/(np.exp(-expon)-1)
+            k = (1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c
             k[~m] = 0
         else: # Linear deformation decay
             if v > 0:
@@ -229,12 +228,12 @@ def grow(imshape, tumour_mask, brain_mask,
 
         # Calculate displacement factor k
         if expon: # Exponential deformation decay
-            print("WARNING: reverse exponential model is not an inaccurate inverse of the forward deformation. Use output with extreme caution.")
+            print("WARNING: reverse exponential model is not an inaccurate inverse of the forward deformation. Use output with extreme caution!!")
             if v > 0:
                 print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
                       squishfactor {squish}""")
             k = np.zeros(Dp.shape)
-            k = (Db/expon) * lambertw( (-expon * Dt * exp(-expon*Dp/Db))/Db, k=0 )
+            k = (Db/expon) * lambertw( (-expon * Dt * np.exp(-expon*Dp/Db))/Db, k=0 )
             # Zero outside brain surface
             k[~m] = 0
             return P + e * k[:, None] * squish
@@ -376,12 +375,14 @@ def parse_args(args):
                    help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
     P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'], default='reverse',
                    help="Specifiy forward or reverse deformation field convention")
+    P.add_argument('--so', action='store_true',
+                   help="Force all tissue to deform to strictly outside the tumour boundaries.")
 
     a = P.parse_args(args)
 
     # Handle arguments
-    if a.def_mode=='reverse' and a.expon:
-        P.error("Reverse deformation calculation not possible with exponential decay model")
+    # if a.def_mode=='reverse' and a.expon:
+    #     P.error("Reverse deformation calculation not possible with exponential decay model")
     if a.seed_override:
         a.seed_override = np.array(a.seed_override.split(','), dtype=float)
     if a.save:
@@ -418,17 +419,17 @@ def main():
     D = grow(img['data'].shape, tumour_vol, brain_vol,
              mode=args.def_mode, expon=args.expon, squish=args.squish,
              save_lookup=args.save, Dt=Dt, Db=Db, v=args.verbosity,
-             S_override=args.seed_override)
+             S_override=args.seed_override, so=args.so)
 
     ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
 
     # Initialise new Mrtrix3 image with voxel size, transform, and algorithm comments
     if isinstance(img['full'], Image):
         out = Image.empty_as(img['full'])
-        out.comments.extend([f'squish = {args.squish}', f'lambda = {args.expon}'])
+        out.comments.extend([f'squish = {args.squish}', f'lambda = {args.expon}', f'{args.def_mode} deformation field'])
     else:
         out = Image(vox=img['voxdims'], transform=img['transform'],
-                    comments=[f'squish = {args.squish}', f'lambda = {args.expon}'])
+                    comments=[f'squish = {args.squish}', f'lambda = {args.expon}', f'{args.def_mode} deformation field'])
     # Save deformation field data
     out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
                 @ out.transform.T)[:,:3].reshape(*img['data'].shape, 3)
