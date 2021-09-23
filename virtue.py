@@ -105,7 +105,7 @@ def grow(imshape, tumour_mask, brain_mask,
     w, l, h = imshape[:3]
 
     # Largest tumour component and centre point S
-    tumour_modif, S = simplify_vol(tumour_mask)
+    tumour_modif, S = simplify_vol(tumour_mask, convex_hull=False)
     if S_override is not None:
         S = S_override
 
@@ -192,36 +192,45 @@ def grow(imshape, tumour_mask, brain_mask,
 
     # Deformation field
     m = brain_mask.flatten().astype(bool)
-    m2 = brain_mask.flatten().astype(bool)
-    if mode == 'forward':
-        # Calculate displacement factor k
-        if so:
-            k = np.zeros(Dp.shape)
-            m = brain_mask.flatten().astype(bool)
-            limit = 1 - Dp/Dt
-            # Normalisation constant
-            c = np.exp(-expon)/(np.exp(-expon)-1)
-            k = np.maximum( ((1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c), limit)
-            # Zero outside brain surface
-            k[~m] = 0
 
-        elif expon: # Exponential deformation decay
+    # Set maximum value for strictly outside deformation
+    l = expon
+    if so:
+        # Initialise decay constant
+        l = Db/Dt
+        # Normalisation constant
+        c = np.exp(-l)/(np.exp(-l)-1)
+        # Iterate optimum value of l
+        niter = 5
+        for i in range(niter):
+            l = Db/(Dt * (1-c))
+            c = np.exp(-l)/(np.exp(-l)-1)
+        print(f"lambda min: {min(l)}, lambda max: {max(l)}. Requested lambda: {expon}")
+        #l = np.minimum(l, expon)
+
+    # Return "P_new", or forward deformation warp convention
+    if mode == 'forward':
+
+        if expon: # Exponential deformation decay
             if v > 0:
                 print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
                       squishfactor {squish}""")
 
             k = np.zeros(Dp.shape)
             # Normalisation constant
-            c = np.exp(-expon)/(np.exp(-expon)-1)
-            k = (1-c) * np.exp( -expon * ((Dp)/(Db)) ) + c
+            c = np.exp(-l)/(np.exp(-l)-1)
+            # Displacement factor
+            k = (1-c) * np.exp( -l * ((Dp)/(Db)) ) + c
             k[~m] = 0
+
+            return P + e * k[:, None] * Dt[:, None] * squish
+
         else: # Linear deformation decay
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
             k = 1 - (Dp/Db)
 
-        # Return "P_new", or forward deformation warp convention
-        return P + e * k[:, None] * Dt[:, None] * squish
+            return P + e * k[:, None] * squish
 
     # Return "P_old", or pull-back / reverse deformation warp convention
     elif mode == 'reverse':
@@ -232,11 +241,16 @@ def grow(imshape, tumour_mask, brain_mask,
             if v > 0:
                 print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
                       squishfactor {squish}""")
+
             k = np.zeros(Dp.shape)
-            k = (Db/expon) * lambertw( (-expon * Dt * np.exp(-expon*Dp/Db))/Db, k=0 )
+            c = (np.exp(-l))/(np.exp(-l)-1)
+
+            k = Dt*c - Db/l * lambertw( (-l * Dt * (1-c) * np.exp(-l/Db * (Dp - Dt*c)))/Db , k=0 )
+
             # Zero outside brain surface
             k[~m] = 0
-            return P + e * k[:, None] * squish
+
+            return P - e * k[:, None] * squish
 
         else: # Linear deformation decay
             if v > 0:
@@ -270,7 +284,7 @@ def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
     """
     # Extract isosurface from smoothed volume using marching cubes algorithm
     V, F, _, _ =  measure.marching_cubes(
-        gaussian(vol, sigma=sigma), 0.5, step_size=1)
+        gaussian(vol.astype(float), sigma=sigma, preserve_range=True), 0.5, step_size=1)
     # Convert to pyvista mesh object
     mesh = pv.PolyData(V, np.c_[3*np.ones((F.shape[0],1)), F].astype(int))
 
@@ -308,9 +322,9 @@ def simplify_vol(vol, convex_hull=True, largest_object=True):
         out[cc[i].bbox[0]:cc[i].bbox[3],
                 cc[i].bbox[1]:cc[i].bbox[4],
                 cc[i].bbox[2]:cc[i].bbox[5]] = cc[i].convex_image
-        return out, (x, y, z)
-    else:
-        return out, (x, y, z)
+
+    return out, (x, y, z)
+
 
 def load_generic(fname, voxel_array_only=False):
     if fname.endswith('.mif'):
@@ -361,7 +375,7 @@ def parse_args(args):
                    help="tumour mask image")
     P.add_argument('--brain', '-b', type=valid_ext(extensions), required=True,
                    help="brain mask image")
-    P.add_argument('--expon', type=int,
+    P.add_argument('--expon', type=float,
                    help="decay constant for exponentional deformation")
     P.add_argument('--squish', type=float, default=1,
                    help="squishfactor for linear deformation")
@@ -407,6 +421,8 @@ def main():
         raise ValueError(f"""Dimension mismatch.
                          Tumour mask {tumour_vol.shape} and
                          image {img['data'].shape[:3]} must have same voxel space.""")
+    # Crop tumour mask to brain mask
+    tumour_mask = np.logical_and(tumour_vol, brain_vol)
 
     Dt, Db = (None, None)
     if args.precomputed:
