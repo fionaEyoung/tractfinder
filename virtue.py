@@ -80,8 +80,8 @@ def grow(imshape, tumour_mask, brain_mask,
          save_lookup=None,
          Dt=None, Db=None, S_override=None,
          mode='reverse',
-         expon=None, squish=1, so=False,
-         v=0):
+         expon=None, squish=1, expon_const=False,
+         v=0, convex_tumour=False):
 
     """
     Grow tumour using radial growth algorithm
@@ -105,7 +105,7 @@ def grow(imshape, tumour_mask, brain_mask,
     w, l, h = imshape[:3]
 
     # Largest tumour component and centre point S
-    tumour_modif, S = simplify_vol(tumour_mask, convex_hull=False)
+    tumour_modif, S = simplify_vol(tumour_mask, convex_hull=convex_tumour)
     if S_override is not None:
         S = S_override
 
@@ -194,8 +194,7 @@ def grow(imshape, tumour_mask, brain_mask,
     m = brain_mask.flatten().astype(bool)
 
     # Set maximum value for strictly outside deformation
-    l = expon
-    if so:
+    if not expon_const:
         # Initialise decay constant
         l = Db/Dt
         # Normalisation constant
@@ -205,8 +204,14 @@ def grow(imshape, tumour_mask, brain_mask,
         for i in range(niter):
             l = Db/(Dt * (1-c))
             c = np.exp(-l)/(np.exp(-l)-1)
-        print(f"lambda min: {min(l)}, lambda max: {max(l)}. Requested lambda: {expon}")
-        #l = np.minimum(l, expon)
+
+        if not expon == -1:
+            print(f"lambda min: {min(l):.1f}, lambda max: {max(l):.1f}. Requested lambda: {expon:.1f}")
+            l = np.minimum(l, expon)
+
+    else:
+        l = expon
+
 
     # Return "P_new", or forward deformation warp convention
     if mode == 'forward':
@@ -237,7 +242,6 @@ def grow(imshape, tumour_mask, brain_mask,
 
         # Calculate displacement factor k
         if expon: # Exponential deformation decay
-            print("WARNING: reverse exponential model is not an inaccurate inverse of the forward deformation. Use output with extreme caution!!")
             if v > 0:
                 print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
                       squishfactor {squish}""")
@@ -245,7 +249,7 @@ def grow(imshape, tumour_mask, brain_mask,
             k = np.zeros(Dp.shape)
             c = (np.exp(-l))/(np.exp(-l)-1)
 
-            k = Dt*c - Db/l * lambertw( (-l * Dt * (1-c) * np.exp(-l/Db * (Dp - Dt*c)))/Db , k=0 )
+            k = Dt*c - Db/l * lambertw( (-l * Dt * (1-c) * np.exp(-l/Db * (Dp - Dt*c)))/Db , k=0 ).real
 
             # Zero outside brain surface
             k[~m] = 0
@@ -375,8 +379,8 @@ def parse_args(args):
                    help="tumour mask image")
     P.add_argument('--brain', '-b', type=valid_ext(extensions), required=True,
                    help="brain mask image")
-    P.add_argument('--expon', type=float,
-                   help="decay constant for exponentional deformation")
+    P.add_argument('--expon', type=float, nargs='?', const=-1,
+                   help="Decay constant for exponentional deformation. If no value specified, program will dynamically set optimum value.")
     P.add_argument('--squish', type=float, default=1,
                    help="squishfactor for linear deformation")
     P.add_argument('--precomputed', type=valid_path,
@@ -389,8 +393,10 @@ def parse_args(args):
                    help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
     P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'], default='reverse',
                    help="Specifiy forward or reverse deformation field convention")
-    P.add_argument('--so', action='store_true',
-                   help="Force all tissue to deform to strictly outside the tumour boundaries.")
+    P.add_argument('--expon_const', action='store_true',
+                   help="Override optimum exponential factor, keep constant at set value. (This may result in weak deformation if lambda is too high)")
+    P.add_argument('--convex_tumour', action='store_true',
+                   help="Use convex hull of tumour segmentation to calculate deformation.")
 
     a = P.parse_args(args)
 
@@ -401,6 +407,8 @@ def parse_args(args):
         a.seed_override = np.array(a.seed_override.split(','), dtype=float)
     if a.save:
         os.makedirs(a.save, exist_ok=True)
+    if a.expon == -1 and a.expon_const:
+        P.error("Must specify value for constant decay factor using '--expon VAL'.")
 
     return a
 
@@ -435,7 +443,8 @@ def main():
     D = grow(img['data'].shape, tumour_vol, brain_vol,
              mode=args.def_mode, expon=args.expon, squish=args.squish,
              save_lookup=args.save, Dt=Dt, Db=Db, v=args.verbosity,
-             S_override=args.seed_override, so=args.so)
+             S_override=args.seed_override, expon_const=args.expon_const,
+             convex_tumour=args.convex_tumour)
 
     ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
 
