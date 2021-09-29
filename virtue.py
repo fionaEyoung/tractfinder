@@ -190,7 +190,7 @@ def grow(imshape, tumour_mask, brain_mask,
             if save_lookup:
                 np.save(os.path.join(save_lookup, "Dt.npy"), Dt)
 
-    # Deformation field
+    # Logical mask for brain region voxels
     m = brain_mask.flatten().astype(bool)
     # Modulate "tumour size" with squishfactor
     Dt *= squish
@@ -257,13 +257,47 @@ def grow(imshape, tumour_mask, brain_mask,
 
             return P - e * k[:, None]
 
+        else: # Linear deformation decay
+            if v > 0:
+                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            k = 1 - ((Dp - Dt)/(Db - Dt))
+
+            return P - e * k[:, None] * Dt[:, None]
+
+    elif mode == 'both':
+
+        if expon: # Exponential deformation decay
+            if v > 0:
+                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
+                      squishfactor {squish}""")
+
+            k = np.zeros(Dp.shape)
+            # Normalisation constant
+            c = (np.exp(-l))/(np.exp(-l)-1)
+
+            # Forward displacement factor
+            k = (1-c) * np.exp( -l * ((Dp)/(Db)) ) + c
+            k[~m] = 0
+            D_forward = P + e * k[:, None] * Dt[:, None]
+
+            # Reverse displacement factor
+            k = Dt*c - Db/l * lambertw( (-l * Dt * (1-c) * np.exp(-l/Db * (Dp - Dt*c)))/Db , k=0 ).real
+            k[~m] = 0
+            D_reverse = P - e * k[:, None]
+
+            return (D_forward, D_reverse)
 
         else: # Linear deformation decay
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
-            k = 1 - ((Dp - squish*Dt)/(Db - squish*Dt))
 
-            return P - e * k[:, None] * Dt[:, None] * squish
+            k = 1 - (Dp/Db)
+            D_forward = P + e * k[:, None] * Dt[:, None]
+
+            k = 1 - ((Dp - Dt)/(Db - Dt))
+            D_reverse = P - e * k[:, None] * Dt[:, None]
+
+            return (D_forward, D_reverse)
 
     else:
         raise ValueError(f"Unsupported mode option {mode}")
@@ -393,7 +427,7 @@ def parse_args(args):
                    help="Increase output verbosity")
     P.add_argument('--seed_override', type=str,
                    help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
-    P.add_argument('--def_mode', type=str, choices=['forward', 'reverse'], default='reverse',
+    P.add_argument('--def_mode', type=str, choices=['forward', 'reverse', 'both'], default='forward',
                    help="Specifiy forward or reverse deformation field convention")
     P.add_argument('--expon_const', action='store_true',
                    help="Override optimum exponential factor, keep constant at set value. (This may result in weak deformation if lambda is too high)")
@@ -449,18 +483,40 @@ def main():
              convex_tumour=args.convex_tumour)
 
     ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
+    if args.def_mode == 'both':
+        # Returned is tuple of two deformation fields, forward and reverse
 
-    # Initialise new Mrtrix3 image with voxel size, transform, and algorithm comments
-    if isinstance(img['full'], Image):
-        out = Image.empty_as(img['full'])
-        out.comments.extend([f'squish = {args.squish}', f'lambda = {args.expon}', f'{args.def_mode} deformation field'])
+        for d, mode in zip(D, ('forward', 'reverse')):
+
+            # Create separate filenames
+            outfile, f_ext = os.path.splitext(args.output)
+            outfile += '-' + mode + f_ext
+
+            comments = [f'squish = {args.squish}', f'lambda = {args.expon}', f'{mode} deformation field']
+            # Initialise new Mrtrix3 image with voxel size, transform, and algorithm comments
+            if isinstance(img['full'], Image):
+                out = Image.empty_as(img['full'])
+                out.comments.extend(comments)
+            else:
+                out = Image(vox=img['voxdims'], transform=img['transform'], comments=comments)
+            # Save deformation field data
+            out.data = (np.hstack((out.vox * d, np.ones((max(d.shape), 1))))
+                        @ out.transform.T)[:,:3].reshape(*img['data'].shape, 3)
+            save_mrtrix(outfile, out)
+
     else:
-        out = Image(vox=img['voxdims'], transform=img['transform'],
-                    comments=[f'squish = {args.squish}', f'lambda = {args.expon}', f'{args.def_mode} deformation field'])
-    # Save deformation field data
-    out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
-                @ out.transform.T)[:,:3].reshape(*img['data'].shape, 3)
-    save_mrtrix(args.output, out)
+        comments = [f'squish = {args.squish}', f'lambda = {args.expon}', f'{args.def_mode} deformation field']
+        # Initialise new Mrtrix3 image with voxel size, transform, and algorithm comments
+        if isinstance(img['full'], Image):
+            out = Image.empty_as(img['full'])
+            out.comments.extend(comments)
+        else:
+            out = Image(vox=img['voxdims'], transform=img['transform'], comments=comments)
+        # Save deformation field data
+
+        out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
+                    @ out.transform.T)[:,:3].reshape(*img['data'].shape, 3)
+        save_mrtrix(args.output, out)
 
 if __name__ == '__main__':
     main()
