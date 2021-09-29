@@ -192,6 +192,8 @@ def grow(imshape, tumour_mask, brain_mask,
 
     # Deformation field
     m = brain_mask.flatten().astype(bool)
+    # Modulate "tumour size" with squishfactor
+    Dt *= squish
 
     # Set maximum value for strictly outside deformation
     if not expon_const:
@@ -228,14 +230,14 @@ def grow(imshape, tumour_mask, brain_mask,
             k = (1-c) * np.exp( -l * ((Dp)/(Db)) ) + c
             k[~m] = 0
 
-            return P + e * k[:, None] * Dt[:, None] * squish
+            return P + e * k[:, None] * Dt[:, None]
 
         else: # Linear deformation decay
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
             k = 1 - (Dp/Db)
 
-            return P + e * k[:, None] * squish
+            return P + e * k[:, None] * Dt[:, None]
 
     # Return "P_old", or pull-back / reverse deformation warp convention
     elif mode == 'reverse':
@@ -250,11 +252,11 @@ def grow(imshape, tumour_mask, brain_mask,
             c = (np.exp(-l))/(np.exp(-l)-1)
 
             k = Dt*c - Db/l * lambertw( (-l * Dt * (1-c) * np.exp(-l/Db * (Dp - Dt*c)))/Db , k=0 ).real
-
             # Zero outside brain surface
             k[~m] = 0
 
-            return P - e * k[:, None] * squish
+            return P - e * k[:, None]
+
 
         else: # Linear deformation decay
             if v > 0:
