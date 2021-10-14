@@ -437,8 +437,6 @@ def parse_args(args):
     a = P.parse_args(args)
 
     # Handle arguments
-    # if a.def_mode=='reverse' and a.expon:
-    #     P.error("Reverse deformation calculation not possible with exponential decay model")
     if a.seed_override:
         a.seed_override = np.array(a.seed_override.split(','), dtype=float)
     if a.save:
