@@ -237,6 +237,7 @@ def grow(imshape, tumour_mask, brain_mask,
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
             k = 1 - (Dp/Db)
+            k[~m] = 0
 
             return P + e * k[:, None] * Dt[:, None]
 
@@ -262,6 +263,7 @@ def grow(imshape, tumour_mask, brain_mask,
             if v > 0:
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
             k = 1 - ((Dp - Dt)/(Db - Dt))
+            k[~m] = 0
 
             return P - e * k[:, None] * Dt[:, None]
 
@@ -293,9 +295,11 @@ def grow(imshape, tumour_mask, brain_mask,
                 print(f"""Computing linear tissue deformation with squishfactor {squish}""")
 
             k = 1 - (Dp/Db)
+            k[~m] = 0
             D_forward = P + e * k[:, None] * Dt[:, None]
 
             k = 1 - ((Dp - Dt)/(Db - Dt))
+            k[~m] = 0
             D_reverse = P - e * k[:, None] * Dt[:, None]
 
             return (D_forward, D_reverse)
