@@ -195,21 +195,22 @@ def grow(imshape, tumour_mask, brain_mask,
     # Modulate "tumour size" with squishfactor
     Dt *= squish
 
-    # Set maximum value for strictly outside deformation
-    if not expon_const:
-        # Initialise decay constant
-        l = Db/Dt
-        # Normalisation constant
-        c = np.exp(-l)/(np.exp(-l)-1)
-        # Iterate optimum value of l
-        niter = 5
-        for i in range(niter):
-            l = Db/(Dt * (1-c))
+    if expon:
+        # Set maximum value for strictly outside deformation
+        if not expon_const:
+            # Initialise decay constant
+            l = Db/Dt
+            # Normalisation constant
             c = np.exp(-l)/(np.exp(-l)-1)
+            # Iterate optimum value of l
+            niter = 5
+            for i in range(niter):
+                l = Db/(Dt * (1-c))
+                c = np.exp(-l)/(np.exp(-l)-1)
 
-        if not expon == -1:
-            print(f"lambda min: {min(l):.1f}, lambda max: {max(l):.1f}. Requested lambda: {expon:.1f}")
-            l = np.minimum(l, expon)
+            if not expon == -1:
+                print(f"lambda min: {min(l):.1f}, lambda max: {max(l):.1f}. Requested lambda: {expon:.1f}")
+                l = np.minimum(l, expon)
 
     else:
         l = expon
