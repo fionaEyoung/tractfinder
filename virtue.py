@@ -79,7 +79,7 @@ def s2c(*args):
 def grow(imshape, tumour_mask, brain_mask,
          save_lookup=None,
          Dt=None, Db=None, S_override=None,
-         mode='reverse',
+         mode='reverse', field='deformation',
          expon=None, squish=1, expon_const=False,
          v=0, convex_tumour=False):
 
@@ -231,7 +231,7 @@ def grow(imshape, tumour_mask, brain_mask,
             k = (1-c) * np.exp( -l * ((Dp)/(Db)) ) + c
             k[~m] = 0
 
-            return P + e * k[:, None] * Dt[:, None]
+            return (field=='deformation')*P + e * k[:, None] * Dt[:, None]
 
         else: # Linear deformation decay
             if v > 0:
@@ -239,7 +239,7 @@ def grow(imshape, tumour_mask, brain_mask,
             k = 1 - (Dp/Db)
             k[~m] = 0
 
-            return P + e * k[:, None] * Dt[:, None]
+            return (field=='deformation')*P + e * k[:, None] * Dt[:, None]
 
     # Return "P_old", or pull-back / reverse deformation warp convention
     elif mode == 'reverse':
@@ -257,7 +257,7 @@ def grow(imshape, tumour_mask, brain_mask,
             # Zero outside brain surface
             k[~m] = 0
 
-            return P - e * k[:, None]
+            return (field=='deformation')*P - e * k[:, None]
 
         else: # Linear deformation decay
             if v > 0:
@@ -265,7 +265,7 @@ def grow(imshape, tumour_mask, brain_mask,
             k = 1 - ((Dp - Dt)/(Db - Dt))
             k[~m] = 0
 
-            return P - e * k[:, None] * Dt[:, None]
+            return (field=='deformation')*P - e * k[:, None] * Dt[:, None]
 
     elif mode == 'both':
 
@@ -281,12 +281,12 @@ def grow(imshape, tumour_mask, brain_mask,
             # Forward displacement factor
             k = (1-c) * np.exp( -l * ((Dp)/(Db)) ) + c
             k[~m] = 0
-            D_forward = P + e * k[:, None] * Dt[:, None]
+            D_forward = (field=='deformation')*P + e * k[:, None] * Dt[:, None]
 
             # Reverse displacement factor
             k = Dt*c - Db/l * lambertw( (-l * Dt * (1-c) * np.exp(-l/Db * (Dp - Dt*c)))/Db , k=0 ).real
             k[~m] = 0
-            D_reverse = P - e * k[:, None]
+            D_reverse = (field=='deformation')*P - e * k[:, None]
 
             return (D_forward, D_reverse)
 
@@ -296,11 +296,11 @@ def grow(imshape, tumour_mask, brain_mask,
 
             k = 1 - (Dp/Db)
             k[~m] = 0
-            D_forward = P + e * k[:, None] * Dt[:, None]
+            D_forward = (field=='deformation')*P + e * k[:, None] * Dt[:, None]
 
             k = 1 - ((Dp - Dt)/(Db - Dt))
             k[~m] = 0
-            D_reverse = P - e * k[:, None] * Dt[:, None]
+            D_reverse = (field=='deformation')*P - e * k[:, None] * Dt[:, None]
 
             return (D_forward, D_reverse)
 
@@ -433,7 +433,9 @@ def parse_args(args):
     P.add_argument('--seed_override', type=str,
                    help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
     P.add_argument('--def_mode', type=str, choices=['forward', 'reverse', 'both'], default='forward',
-                   help="Specifiy forward or reverse deformation field convention")
+                   help="Specify forward or reverse deformation field convention")
+    P.add_argument('--out_format', type=str, choices=['deformation', 'displacement'], default='displacement',
+                   help="Specify whether output should be a deformation or displacement field")
     P.add_argument('--expon_const', action='store_true',
                    help="Override optimum exponential factor, keep constant at set value. (This may result in weak deformation if lambda is too high)")
     P.add_argument('--convex_tumour', action='store_true',
@@ -483,7 +485,7 @@ def main():
              mode=args.def_mode, expon=args.expon, squish=args.squish,
              save_lookup=args.save, Dt=Dt, Db=Db, v=args.verbosity,
              S_override=args.seed_override, expon_const=args.expon_const,
-             convex_tumour=args.convex_tumour)
+             convex_tumour=args.convex_tumour, field=args.out_format)
 
     ## Save deformation field to mrtrix file. Convert voxel indices to scanner coordinates
     if args.def_mode == 'both':
