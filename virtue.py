@@ -1,6 +1,7 @@
 # VIRtual TUmour Expansion
 import argparse
 import sys, os
+from pathlib import Path
 import numpy as np
 import nibabel as nib
 import skimage
@@ -397,12 +398,12 @@ def parse_args(args):
 
     def valid_ext(opts):
         def type_fun(fname):
-            ext = fname.split(os.extsep,1)[1]
+            ext = ''.join(Path(fname).suffixes)
             if not ext in opts:
-                raise argparse.ArgumentTypeError(f"Only the following file extensions are supported: {opts}")
+                raise argparse.ArgumentTypeError(f"Filename {fname}: Only the following file extensions are supported: {opts}")
             return fname
         return type_fun
-    extensions = ('mif', 'nii', 'nii.gz')
+    extensions = ('.mif', '.nii', '.nii.gz')
 
     def valid_path(string):
         if os.path.isdir(string):
@@ -414,7 +415,7 @@ def parse_args(args):
     P = argparse.ArgumentParser()
     P.add_argument('input', type=valid_ext(extensions),
                     help="input filename to be deformed")
-    P.add_argument('output', type=valid_ext(('mif')), # Only supprt write to .mif file
+    P.add_argument('output', type=valid_ext(('.mif')), # Only supprt write to .mif file
                    help="output filename for deformed image")
     P.add_argument('--tumour', '-t', type=valid_ext(extensions), required=True,
                    help="tumour mask image")
