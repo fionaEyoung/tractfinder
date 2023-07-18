@@ -4,6 +4,7 @@ import sys, os
 from pathlib import Path
 import numpy as np
 import nibabel as nib
+from nibabel.orientations import apply_orientation, axcodes2ornt, aff2axcodes
 import skimage
 from skimage import measure, morphology
 from skimage.filters import gaussian
@@ -385,10 +386,10 @@ def load_generic(fname, voxel_array_only=False):
     elif fname.endswith('.nii') or fname.endswith('.nii.gz'):
         img = nib.load(fname)
         if voxel_array_only:
-            return img.get_fdata()
+            return apply_orientation(img.get_fdata(), axcodes2ornt(aff2axcodes(img.affine)))
         else:
             return {'full': img,
-                    'data': img.get_fdata(),
+                    'data': apply_orientation(img.get_fdata(), axcodes2ornt(aff2axcodes(img.affine))),
                     'voxdims': img.header.get_zooms(),
                     'transform': img.affine}
     else:
