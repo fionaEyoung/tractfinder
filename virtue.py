@@ -461,8 +461,8 @@ def main():
 
     # Extract image data arrays
     img = load_generic(args.input)
-    tumour_vol = load_generic(args.tumour, voxel_array_only=True)
-    brain_vol = load_generic(args.brain, voxel_array_only=True)
+    tumour_vol = load_generic(args.tumour, voxel_array_only=True).astype(bool)
+    brain_vol = load_generic(args.brain, voxel_array_only=True).astype(bool)
     # TODO check dimensions on images
     if not brain_vol.shape==img['data'].shape[:3]:
         raise ValueError(f"""Dimension mismatch.
@@ -473,7 +473,7 @@ def main():
                          Tumour mask {tumour_vol.shape} and
                          image {img['data'].shape[:3]} must have same voxel space.""")
     # Crop tumour mask to brain mask
-    tumour_mask = np.logical_and(tumour_vol, brain_vol)
+    tumour_vol = np.logical_and(tumour_vol, brain_vol)
 
     Dt, Db = (None, None)
     if args.precomputed:
