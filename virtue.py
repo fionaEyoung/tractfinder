@@ -1,5 +1,6 @@
 # VIRtual TUmour Expansion
-import argparse
+import argparse, textwrap
+from argparse import HelpFormatter
 import sys, os
 from pathlib import Path
 import numpy as np
@@ -400,7 +401,7 @@ def parse_args(args):
     def valid_ext(opts):
         def type_fun(fname):
             ext = ''.join(Path(fname).suffixes)
-            if not ext in opts:
+            if not any([ext.endswith(e) for e in opts]):
                 raise argparse.ArgumentTypeError(f"Filename {fname}: Only the following file extensions are supported: {opts}")
             return fname
         return type_fun
@@ -412,46 +413,72 @@ def parse_args(args):
         else:
             raise argparse.ArgumentTypeError(f"Not a valid directory: {string}")
 
+    class RawFormatter(HelpFormatter):
+        # thanks https://stackoverflow.com/a/64102901
+        def _fill_text(self, text, width, indent):
+            return "\n".join([textwrap.fill(line, width) for line in textwrap.indent(textwrap.dedent(text), indent).splitlines()])
 
-    P = argparse.ArgumentParser()
-    P.add_argument('input', type=valid_ext(extensions),
+    credit = '''
+        Author:     Fiona Young (fiona.young.15@ucl.ac.uk)
+        References: [1] Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022).
+                    Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients
+                    using tract-specific orientation atlas and tumour deformation modelling.
+                    International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z
+                    [2] Nowinski, W. L., & Belov, D. (2005). Toward atlas-assisted automatic interpretation
+                    of MRI morphological brain scans in the presence of tumor.
+                    Academic radiology, 12(8), 1049–1057. https://doi.org/10.1016/j.acra.2005.04.018'''
+
+    P = argparse.ArgumentParser(description="Compute deformation field from brain and lesion segmentations.",
+                                formatter_class=RawFormatter,
+                                epilog=credit)
+
+    reqs = P.add_argument_group("Required arguments")
+    reqs.add_argument('input', type=valid_ext(extensions),
                     help="input filename to be deformed")
-    P.add_argument('output', type=valid_ext(('.mif')), # Only supprt write to .mif file
+    reqs.add_argument('output', type=valid_ext(('.mif')), # Only supprt write to .mif file
                    help="output filename for deformed image")
-    P.add_argument('--tumour', '-t', type=valid_ext(extensions), required=True,
+    reqs.add_argument('--tumour', '-t', type=valid_ext(extensions), required=True,
                    help="tumour mask image")
-    P.add_argument('--brain', '-b', type=valid_ext(extensions), required=True,
+    reqs.add_argument('--brain', '-b', type=valid_ext(extensions), required=True,
                    help="brain mask image")
-    P.add_argument('--expon', type=float, nargs='?', const=-1,
-                   help="Decay constant for exponentional deformation. If no value specified, program will dynamically set optimum value.")
-    P.add_argument('--squish', type=float, default=1,
+
+    alg_opts = P.add_argument_group("Algorithm options", "Default behaviour is to compute the linear deformation model as described in [2]")
+    alg_opts.add_argument('--expon', type=float, nargs='?', const=-1,
+                   help="Decay constant for exponentional deformation [1]. If no value specified, program will dynamically set optimum value.")
+    alg_opts.add_argument('--expon_const', action='store_true',
+                   help="Override optimum exponential factor, keep constant at set value. (This may result in weak deformation if lambda is too high)")
+    alg_opts.add_argument('--squish', type=float, default=1,
                    help="squishfactor for linear deformation")
-    P.add_argument('--precomputed', type=valid_path,
-                   help="directory containing precomputed arrays for Dt and Db")
-    P.add_argument('--save', type=str,
-                   help="directory to save arrays Dt and Db for future use")
+    alg_opts.add_argument('--convex_tumour', action='store_true',
+                   help="Use convex hull of tumour segmentation to calculate deformation.")
+    alg_opts.add_argument('--seed_override', type=str,
+                   help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
+
+    io_opts  = P.add_argument_group("I/O options")
+    io_opts.add_argument('--lookup', type=str,
+                   help="directory containing/for saving precomputed arrays for Dt and Db. These can be reused with different algorithm settings, as long as brain and tumour masks are unchanged. "
+                        "If Dt and Db exist, they will be reused for this computation, else they will be written to the specified directory")
+    io_opts.add_argument('--overwrite_lookup', action='store_true',
+                   help="Force recomputing and overwriting of lookup tables to directory specified by --lookup option")
+    io_opts.add_argument('--def_mode', type=str, choices=['forward', 'reverse', 'both'], default='reverse',
+                   help="Specify forward or reverse deformation field convention. Choose reverse for images, forward for streamlines. Default: %(default)s")
+    io_opts.add_argument('--out_format', type=str, choices=['deformation', 'displacement'], default='deformation',
+                   help="Specify whether output should be a deformation or displacement field. Default: %(default)s")
+
     P.add_argument('--verbosity', '-v', action='count', default=0,
                    help="Increase output verbosity")
-    P.add_argument('--seed_override', type=str,
-                   help="Manually specify seed point from which tumour grows, as comma separated list of voxel coordinates")
-    P.add_argument('--def_mode', type=str, choices=['forward', 'reverse', 'both'], default='forward',
-                   help="Specify forward or reverse deformation field convention")
-    P.add_argument('--out_format', type=str, choices=['deformation', 'displacement'], default='displacement',
-                   help="Specify whether output should be a deformation or displacement field")
-    P.add_argument('--expon_const', action='store_true',
-                   help="Override optimum exponential factor, keep constant at set value. (This may result in weak deformation if lambda is too high)")
-    P.add_argument('--convex_tumour', action='store_true',
-                   help="Use convex hull of tumour segmentation to calculate deformation.")
 
     a = P.parse_args(args)
 
     # Handle arguments
     if a.seed_override:
         a.seed_override = np.array(a.seed_override.split(','), dtype=float)
-    if a.save:
-        os.makedirs(a.save, exist_ok=True)
+    if a.lookup:
+        os.makedirs(a.lookup, exist_ok=True)
     if a.expon == -1 and a.expon_const:
         P.error("Must specify value for constant decay factor using '--expon VAL'.")
+    if a.overwrite_lookup and not a.lookup:
+        P.error("--overwrite_lookup options requires --lookup to be specified")
 
     return a
 
@@ -476,16 +503,16 @@ def main():
     tumour_vol = np.logical_and(tumour_vol, brain_vol)
 
     Dt, Db = (None, None)
-    if args.precomputed:
-        if os.path.exists(os.path.join(args.precomputed, 'Dt.npy')):
-            Dt = os.path.join(args.precomputed, 'Dt.npy')
-        if os.path.exists(os.path.join(args.precomputed, 'Db.npy')):
-            Db = os.path.join(args.precomputed, 'Db.npy')
+    if args.lookup and not args.overwrite_lookup:
+        if os.path.exists(os.path.join(args.lookup, 'Dt.npy')):
+            Dt = os.path.join(args.lookup, 'Dt.npy')
+        if os.path.exists(os.path.join(args.lookup, 'Db.npy')):
+            Db = os.path.join(args.lookup, 'Db.npy')
 
     # Calculate deformation field from tumour
     D = grow(img['data'].shape, tumour_vol, brain_vol,
              mode=args.def_mode, expon=args.expon, squish=args.squish,
-             save_lookup=args.save, Dt=Dt, Db=Db, v=args.verbosity,
+             save_lookup=args.lookup, Dt=Dt, Db=Db, v=args.verbosity,
              S_override=args.seed_override, expon_const=args.expon_const,
              convex_tumour=args.convex_tumour, field=args.out_format)
 
