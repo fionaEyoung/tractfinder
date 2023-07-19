@@ -214,8 +214,8 @@ def grow(imshape, tumour_mask, brain_mask,
                 print(f"lambda min: {min(l):.1f}, lambda max: {max(l):.1f}. Requested lambda: {expon:.1f}")
                 l = np.minimum(l, expon)
 
-    else:
-        l = expon
+        else:
+            l = expon
 
 
     # Return "P_new", or forward deformation warp convention
