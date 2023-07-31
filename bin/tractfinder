@@ -18,7 +18,7 @@
 # Script for mapping fibre bundles based on provided tract orientation atlas[es]
 # Written by Fiona Young, 2023
 
-import os, shutil
+import os, shutil, copy
 
 MAP_SUFFIX = '_tractmap'
 DOF = 12
@@ -52,6 +52,21 @@ def usage(cmdline): #pylint: disable=unused-variable
   cmdline.add_citation('Nowinski, W. L., & Belov, D. (2005). Toward atlas-assisted automatic interpretation of MRI morphological brain scans in the presence of tumor. Academic radiology, 12(8), 1049–1057. https://doi.org/10.1016/j.acra.2005.04.018')
   # TODO: add conditional citation for FMRIB if registration done in script (i.e. transform option not provided)
 
+# "Overloaded" from mrtrix3.path.make_dir to check if existing file is a directory
+# Make a directory if it doesn't exist; don't do anything if it does already exist
+def make_dir(path):
+  from mrtrix3 import app, MRtrixError
+  import errno
+  try:
+    os.makedirs(path)
+    app.debug('Created directory ' + path)
+  except OSError as exception:
+    if exception.errno != errno.EEXIST:
+      raise
+    elif not os.path.isdir(path):
+      raise MRtrixError('Path \'' + path + '\' exists and is not a directory')
+    app.debug('Directory \'' + path + '\' already exists')
+
 def execute():
   from mrtrix3 import MRtrixError
   from mrtrix3 import algorithm, app, image, path, run
@@ -68,23 +83,27 @@ def execute():
   elif len(app.ARGS.arg_pairs) == 2:
     # Check if directories have been provided
     source, dest = app.ARGS.arg_pairs
-    app.check_output_path(dest)
     if os.path.isdir(source):
       app.debug('Atlas input is directory')
-      app.make_dir(dest)
+      make_dir(dest)
       atlas_paths = path.all_in_dir(source, dir_path=True)
       output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + MAP_SUFFIX + os.path.splitext(os.path.basename(in_path))[1]) for in_path in atlas_paths]
-    # Just a single atlas/output pair
-    else:
-      atlas_paths.append(source)
-      output_paths.append(dest)
+      for i, p in reversed(list(enumerate(copy.copy(output_paths)))):
+        try: app.check_output_path(p)
+        except MRtrixError:
+          app.console('Skipping output file \'' + p + '\' (use -force to override)') # Should this be warn()?
+          atlas_paths.pop(i)
+          output_paths.pop(i)
+        finally:
+          if not (atlas_paths and output_paths):
+            raise MRtrixError('No new outputs to create (use -force to overwrite contents of output directory) \'' + dest + '\'')
+      app.debug(f'Creating {len(output_paths)} new files')
   else:
     # Arbitrary number of atlas / output pairs
     atlas_paths  = app.ARGS.arg_pairs[::2]
     output_paths = app.ARGS.arg_pairs[1::2]
-
-  for p in output_paths:
-    app.check_output_path(p)
+    for p in output_paths:
+      app.check_output_path(p)
 
   app.make_scratch_dir()
   app.goto_scratch_dir()
