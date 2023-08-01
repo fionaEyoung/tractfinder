@@ -31,7 +31,7 @@ def usage(cmdline): #pylint: disable=unused-variable
   # cmdline.add_description('')
 
   cmdline.add_argument('input',help='The input FOD image')
-  cmdline.add_argument('arg_pairs', metavar=['atlas output'], help='pairs of atlas / output images. If only one of each is specified and both are directories, all atlas present in the first directory will be mapped and the results will be stored in the second.', nargs='+')
+  cmdline.add_argument('arg_pairs', metavar=['atlas output [atlas output ...]'], help='pairs of atlas / output images. If only one of each is specified and both are directories, all atlas present in the first directory will be mapped and the results will be stored in the second.', nargs='+')
 
   # Virtue options
   virtue_options = cmdline.add_argument_group('!!!NOT CURRENTLY IMPLEMENTED!!! Tumour deformation modelling options')
@@ -46,11 +46,15 @@ def usage(cmdline): #pylint: disable=unused-variable
   common_options = cmdline.add_argument_group('General tractfinder options')
   common_options.add_argument('-transform', help='provide transformation from atlas space to subject space')
   common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space')
-  common_options.add_argument('-binary', action='store_true', help='threshold tractmap to binary segmentation')
+  common_options.add_argument('-premasked', action='store_true', help='indicate that the input structural image has been brain masked (otherwise script will perform brain extraction.) Note: the structural image in template space is ALWAYS assumed to be masked')
+  cmdline.flag_mutually_exclusive_options( ['transform', 'struct'], required=True )
+  common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
+  common_options.add_argument('-suffix', nargs=1, default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only atlas directory as input) (default: {MAP_SUFFIX}')
 
+  # Citations
   cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
   cmdline.add_citation('Nowinski, W. L., & Belov, D. (2005). Toward atlas-assisted automatic interpretation of MRI morphological brain scans in the presence of tumor. Academic radiology, 12(8), 1049–1057. https://doi.org/10.1016/j.acra.2005.04.018')
-  # TODO: add conditional citation for FMRIB if registration done in script (i.e. transform option not provided)
+  cmdline.add_citation('Jenkinson, M., Bannister, P., Brady, J. M. and Smith, S. M. Improved Optimisation for the Robust and Accurate Linear Registration and Motion Correction of Brain Images. NeuroImage, 17(2), 825-841, 2002.', condition='If performing registration (i.e. -linear option not provided)', is_external=True)
 
 # "Overloaded" from mrtrix3.path.make_dir to check if existing file is a directory
 # Make a directory if it doesn't exist; don't do anything if it does already exist
@@ -74,9 +78,6 @@ def execute():
   atlas_paths = []
   output_paths = []
 
-  if not (app.ARGS.transform or app.ARGS.struct):
-    raise MRtrixError('Either -transform or -struct must be provided for coregistration')
-
   # Check and parse argument inputs
   if len(app.ARGS.arg_pairs) % 2:
     raise MRtrixError('command expects pairs of input tract atlas and output map images to be provided.')
@@ -92,7 +93,7 @@ def execute():
           if h.is_sh(): atlas_paths.append(p)
           else: app.console('Skipping non-SH input file \'' + h.name() + '\'')
         except MRtrixError: pass
-      output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + MAP_SUFFIX + os.path.splitext(os.path.basename(in_path))[1]) for in_path in atlas_paths]
+      output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + app.ARGS.suffix + os.path.splitext(os.path.basename(in_path))[1]) for in_path in atlas_paths]
       for i, p in reversed(list(enumerate(copy.copy(output_paths)))):
         try: app.check_output_path(p)
         except MRtrixError:
@@ -119,21 +120,25 @@ def execute():
   ## Registration
   if app.ARGS.transform:
     shutil.copy(path.from_user(app.ARGS.transform, False), 'transform.txt')
+
   elif app.ARGS.struct:
 
     ## Attempt robust registration with brain masking
     strides = image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
-    sstrides = ','.join(str(s) for s in strides)
+    strides = ','.join(str(s) for s in strides)
 
-    run.command('mrconvert -strides ' + sstrides + ' '
+    run.command('mrconvert -strides ' + strides + ' '
                 + path.from_user(app.ARGS.struct[1]) + ' struct.nii.gz', show=False)
 
     if app.ARGS.brain_mask:
       run.command('mrgrid -template struct.nii.gz '
                   + path.from_user(app.ARGS.brain_mask)
                   + ' regrid mask.mif -datatype bit -interp nearest -strides '
-                  + sstrides)
+                  + strides)
       run.command('mrcalc mask.mif struct.nii.gz 0 -if bet.nii.gz', show=False)
+    elif app.ARGS.premasked:
+      os.rename('struct.nii.gz', 'bet.nii.gz')
+
     else:
       app.console('No brain mask provided, attempting to generate robust mask')
       ## Try can create a decent brain mask
@@ -145,7 +150,7 @@ def execute():
       run.command('mrfilter fod_mask.nii.gz smooth -extent 5 - | '
                   + 'mrthreshold - -abs 0.5 - | '
                   + 'mrgrid -template struct.nii.gz -interp nearest -strides '
-                  + sstrides
+                  + strides
                   + ' - regrid fod_mask_smooth_regrid.mif', show=False)
       # Dilate and use to roughly crop structural image. This is so that bet
       # has a better change of a clean segmentation without a bunch of neck etc.
@@ -155,6 +160,7 @@ def execute():
       run.command('bet struct_rough_masked.nii.gz bet.nii.gz -r 100 -m ', show=False)
       run.command('mrconvert bet_mask.nii.gz mask.mif -datatype bit', show=False)
 
+    # Registration
     app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
     run.command('flirt -in ' + path.from_user(app.ARGS.struct[0])
                  + ' -ref bet.nii.gz '
@@ -165,13 +171,11 @@ def execute():
 
   ## Cycle through all the atlases
   progress = app.ProgressBar('Mapping tracts')
-  i = 1
-  n = len(atlas_paths)
+  i, n = 1, len(atlas_paths)
+
   for atlas_path, output_path in zip(atlas_paths, output_paths):
-
     progress.increment(f'Mapping atlas {i} of {n} to subject')
-
-    app.debug('Transforming atlas...')
+    # Transform atlas
     run.command('mrtransform -linear transform.txt'
                   + ' -reorient_fod yes '
                   + ' -template ' + path.from_user(app.ARGS.input) + ' '
@@ -179,16 +183,19 @@ def execute():
                   + path.to_scratch(f'atlas_{i}.mif'), show=False)
 
     progress.increment()
-    app.debug('Computing inner product...')
-    run.command('mrcalc -quiet '
-                  + f'atlas_{i}.mif '
-                  + path.from_user(app.ARGS.input)
-                  + ' -mult - | mrmath -quiet - sum -axis 3 '
-                  + path.from_user(output_path), show=False, force=app.FORCE_OVERWRITE)
+    # Compute inner product
+    ip_command_string = (f'mrcalc -quiet atlas_{i}.mif ' + path.from_user(app.ARGS.input) + ' -mult - | '
+                         +'mrmath -quiet - sum -axis 3 ')
+    if app.ARGS.binary:
+      app.console(f'Binarising output with threshold {app.ARGS.binary}')
+      ip_command_string += f' - | mrthreshold -abs {app.ARGS.binary} - {path.from_user(output_path)}'
+    else:
+      ip_command_string += path.from_user(output_path)
+    run.command(ip_command_string, show=False, force=app.FORCE_OVERWRITE)
+
     i += 1
 
   progress.done()
-
 
 # Execute the script
 import mrtrix3
