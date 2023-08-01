@@ -1,0 +1,216 @@
+#!/usr/bin/env python
+
+# Copyright (c) 2008-2023 the MRtrix3 contributors.
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# Covered Software is provided under this License on an "as is"
+# basis, without warranty of any kind, either expressed, implied, or
+# statutory, including, without limitation, warranties that the
+# Covered Software is free of defects, merchantable, fit for a
+# particular purpose or non-infringing.
+# See the Mozilla Public License v. 2.0 for more details.
+#
+# For more details, see http://www.mrtrix.org/.
+
+# Script for mapping fibre bundles based on provided tract orientation atlas[es]
+# Written by Fiona Young, 2023
+
+import os, shutil, copy
+
+MAP_SUFFIX = '_tractmap'
+DOF = 12
+
+def usage(cmdline): #pylint: disable=unused-variable
+  from mrtrix3 import algorithm, app #pylint: disable=no-name-in-module, import-outside-toplevel
+
+  cmdline.set_author('Fiona Young (fiona.young.15@ucl.ac.uk)')
+  cmdline.set_synopsis('Map fibre bundles based on tract orientation atlas(es)')
+  # cmdline.add_description('')
+
+  cmdline.add_argument('input',help='The input FOD image')
+  cmdline.add_argument('arg_pairs', metavar=['atlas output [atlas output ...]'], help='pairs of atlas / output images. If only one of each is specified and both are directories, all atlas present in the first directory will be mapped and the results will be stored in the second.', nargs='+')
+
+  # Virtue options
+  virtue_options = cmdline.add_argument_group('!!!NOT CURRENTLY IMPLEMENTED!!! Tumour deformation modelling options')
+  virtue_options.add_argument('-brain_mask', metavar='image', help='Provide brain mask. If not provided, will attempt to estimate brain mask based on input FOD image (this is flakey!)')
+  virtue_options.add_argument('-tumour', metavar='image', help='Provide tumour mask. This argument is required and sufficient to trigger deformation modelling')
+  virtue_options.add_argument('-k', metavar='type', help='Type of deformation to model. Options are: linear, exponential (default: linear)',
+                                choices=['linear', 'exponential'], default='linear')
+  virtue_options.add_argument('-scale', metavar='fraction', help='Tumour scale factor (formerly squishfactor) (default: 1)')
+  virtue_options.add_argument('-store_lookup', metavar='directory', help='Location for storing/reusing Dt/Db lookup matrices for deformation algorithm. Recommended for speedup if recomputing deformation.')
+
+  # General options
+  common_options = cmdline.add_argument_group('General tractfinder options')
+  common_options.add_argument('-transform', help='provide transformation from atlas space to subject space')
+  common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space')
+  common_options.add_argument('-premasked', action='store_true', help='indicate that the input structural image has been brain masked (otherwise script will perform brain extraction.) Note: the structural image in template space is ALWAYS assumed to be masked')
+  cmdline.flag_mutually_exclusive_options( ['transform', 'struct'], required=True )
+  common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
+  common_options.add_argument('-suffix', nargs=1, default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only atlas directory as input) (default: {MAP_SUFFIX}')
+
+  # Citations
+  cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
+  cmdline.add_citation('Nowinski, W. L., & Belov, D. (2005). Toward atlas-assisted automatic interpretation of MRI morphological brain scans in the presence of tumor. Academic radiology, 12(8), 1049–1057. https://doi.org/10.1016/j.acra.2005.04.018')
+  cmdline.add_citation('Jenkinson, M., Bannister, P., Brady, J. M. and Smith, S. M. Improved Optimisation for the Robust and Accurate Linear Registration and Motion Correction of Brain Images. NeuroImage, 17(2), 825-841, 2002.', condition='If performing registration (i.e. -linear option not provided)', is_external=True)
+
+# "Overloaded" from mrtrix3.path.make_dir to check if existing file is a directory
+# Make a directory if it doesn't exist; don't do anything if it does already exist
+def make_dir(path):
+  from mrtrix3 import app, MRtrixError
+  import errno
+  try:
+    os.makedirs(path)
+    app.debug('Created directory ' + path)
+  except OSError as exception:
+    if exception.errno != errno.EEXIST:
+      raise
+    elif not os.path.isdir(path):
+      raise MRtrixError('Path \'' + path + '\' exists and is not a directory')
+    app.debug('Directory \'' + path + '\' already exists')
+
+def execute():
+  from mrtrix3 import MRtrixError
+  from mrtrix3 import algorithm, app, image, path, run, fsl
+
+  atlas_paths = []
+  output_paths = []
+
+  ## Check and parse argument inputs
+  if len(app.ARGS.arg_pairs) % 2:
+    raise MRtrixError('command expects pairs of input tract atlas and output map images to be provided.')
+  elif len(app.ARGS.arg_pairs) == 2:
+    # Check if directories have been provided
+    source, dest = app.ARGS.arg_pairs
+    if os.path.isdir(source):
+      app.debug('Atlas input is directory')
+      make_dir(dest)
+      for p in path.all_in_dir(source, dir_path=True):
+        try:
+          h = image.Header(p)
+          if h.is_sh(): atlas_paths.append(p)
+          else: app.console('Skipping non-SH input file \'' + h.name() + '\'')
+        except MRtrixError: pass
+      output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + app.ARGS.suffix + os.path.splitext(os.path.basename(in_path))[1]) for in_path in atlas_paths]
+      for i, p in reversed(list(enumerate(copy.copy(output_paths)))):
+        try: app.check_output_path(p)
+        except MRtrixError:
+          app.console('Skipping output file \'' + p + '\' (use -force to override)') # Should this be warn()?
+          atlas_paths.pop(i)
+          output_paths.pop(i)
+        finally:
+          if not (atlas_paths and output_paths):
+            raise MRtrixError('No new outputs to create (use -force to overwrite contents of output directory) \'' + dest + '\'')
+      app.debug(f'Creating {len(output_paths)} new files')
+    else:
+      app.check_output_path(dest)
+      atlas_paths, output_paths = [source], [dest]
+  else:
+    # Arbitrary number of atlas / output pairs
+    atlas_paths  = app.ARGS.arg_pairs[::2]
+    output_paths = app.ARGS.arg_pairs[1::2]
+    for p in output_paths:
+      app.check_output_path(p)
+
+  bet_cmd = fsl.exe_name('bet')
+  flirt_cmd = fsl.exe_name('flirt')
+  fsl_suffix = fsl.suffix()
+
+  app.make_scratch_dir()
+  app.goto_scratch_dir()
+
+  ## Registration
+  if app.ARGS.transform:
+    shutil.copy(path.from_user(app.ARGS.transform, False), 'transform.txt')
+
+  elif app.ARGS.struct:
+
+    struct_image = 'struct.nii.gz'
+    mask_image = 'mask.mif'
+    bet_image = 'bet' + fsl_suffix
+
+    ## Attempt robust registration with brain masking
+    strides = image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
+    strides = ','.join(str(s) for s in strides)
+
+    run.command('mrconvert -strides ' + strides + ' '
+                + path.from_user(app.ARGS.struct[1]) + ' ' + struct_image, show=False)
+
+    if app.ARGS.brain_mask:
+      # Regrid anyway, to be sure it will match the template image strides
+      run.command(f'mrgrid -template f{struct_image} '
+                  + path.from_user(app.ARGS.brain_mask)
+                  + f' regrid {mask_image} -datatype bit -interp nearest -strides '
+                  + strides)
+      run.command(f'mrcalc {mask_image} {struct_image} -mult {bet_image}', show=False)
+
+    elif app.ARGS.premasked:
+      os.rename(struct_image, bet_image)
+
+    else:
+      # BET madness ensues
+      app.console('No brain mask provided, attempting to generate robust mask')
+      ## Try can create a decent brain mask
+      # Start with the FOD amplitude image, fill holes
+      run.command('mrconvert -coord 3 0 ' + path.from_user(app.ARGS.input)
+                   + ' - |  mrthreshold - -abs 0 -comparison gt fod_mask.nii.gz', show=False)
+      run.command('fslmaths fod_mask.nii.gz -fillh fod_mask.nii.gz', show=False)
+      # Smooth edges and regrid to structural space
+      run.command('mrfilter fod_mask.nii.gz smooth -extent 5 - | '
+                  + 'mrthreshold - -abs 0.5 - | '
+                  + 'mrgrid -template struct.nii.gz -interp nearest -strides '
+                  + strides
+                  + ' - regrid fod_mask_smooth_regrid.mif', show=False)
+      # Dilate and use to roughly crop structural image. This is so that bet
+      # has a better change of a clean segmentation without a bunch of neck etc.
+      run.command('maskfilter fod_mask_smooth_regrid.mif dilate -npass 5 - | '
+                  + f'mrcalc - {struct_image} -mult struct_rough_masked.nii.gz', show=False)
+      # Brain masking using bet
+      run.command(f'{bet_cmd} struct_rough_masked.nii.gz {bet_image} -r 100 -m ', show=False)
+      bet_image = fsl.find_image(bet_image)
+      run.command(f'mrconvert bet_mask{fsl_suffix} {mask_image} -datatype bit', show=False)
+
+    # Actually run registrtion
+    app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
+    run.command(flirt_cmd + ' -in ' + path.from_user(app.ARGS.struct[0])
+                 +  ' -ref ' + bet_image
+                 + f' -dof {DOF} -omat transform_flirt.txt')
+    run.command('transformconvert transform_flirt.txt '
+                 + path.from_user(app.ARGS.struct[0]) + ' ' + bet_image
+                 + ' flirt_import transform.txt -quiet', show=False)
+
+  # Finish registration branching
+
+  ## Cycle through all the atlases
+  progress = app.ProgressBar('Mapping tracts')
+  i, n = 1, len(atlas_paths)
+
+  for atlas_path, output_path in zip(atlas_paths, output_paths):
+    progress.increment(f'Mapping atlas {i} of {n} to subject')
+    # Transform atlas
+    run.command('mrtransform -linear transform.txt'
+                  + ' -reorient_fod yes '
+                  + ' -template ' + path.from_user(app.ARGS.input) + ' '
+                  + path.from_user(atlas_path) + ' '
+                  + path.to_scratch(f'atlas_{i}.mif'), show=False)
+
+    progress.increment()
+    # Compute inner product
+    ip_command_string = (f'mrcalc -quiet atlas_{i}.mif ' + path.from_user(app.ARGS.input) + ' -mult - | '
+                         +'mrmath -quiet - sum -axis 3 ')
+    if app.ARGS.binary:
+      app.console(f'Binarising output with threshold {app.ARGS.binary}')
+      ip_command_string += f' - | mrthreshold -abs {app.ARGS.binary} - {path.from_user(output_path)}'
+    else:
+      ip_command_string += path.from_user(output_path)
+    run.command(ip_command_string, show=False, force=app.FORCE_OVERWRITE)
+
+    i += 1
+
+  progress.done()
+
+# Execute the script
+import mrtrix3
+mrtrix3.execute() #pylint: disable=no-member
