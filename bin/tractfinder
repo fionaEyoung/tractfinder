@@ -73,12 +73,12 @@ def make_dir(path):
 
 def execute():
   from mrtrix3 import MRtrixError
-  from mrtrix3 import algorithm, app, image, path, run
+  from mrtrix3 import algorithm, app, image, path, run, fsl
 
   atlas_paths = []
   output_paths = []
 
-  # Check and parse argument inputs
+  ## Check and parse argument inputs
   if len(app.ARGS.arg_pairs) % 2:
     raise MRtrixError('command expects pairs of input tract atlas and output map images to be provided.')
   elif len(app.ARGS.arg_pairs) == 2:
@@ -114,6 +114,10 @@ def execute():
     for p in output_paths:
       app.check_output_path(p)
 
+  bet_cmd = fsl.exe_name('bet')
+  flirt_cmd = fsl.exe_name('flirt')
+  fsl_suffix = fsl.suffix()
+
   app.make_scratch_dir()
   app.goto_scratch_dir()
 
@@ -123,23 +127,30 @@ def execute():
 
   elif app.ARGS.struct:
 
+    struct_image = 'struct.nii.gz'
+    mask_image = 'mask.mif'
+    bet_image = 'bet' + fsl_suffix
+
     ## Attempt robust registration with brain masking
     strides = image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
     strides = ','.join(str(s) for s in strides)
 
     run.command('mrconvert -strides ' + strides + ' '
-                + path.from_user(app.ARGS.struct[1]) + ' struct.nii.gz', show=False)
+                + path.from_user(app.ARGS.struct[1]) + ' ' + struct_image, show=False)
 
     if app.ARGS.brain_mask:
-      run.command('mrgrid -template struct.nii.gz '
+      # Regrid anyway, to be sure it will match the template image strides
+      run.command(f'mrgrid -template f{struct_image} '
                   + path.from_user(app.ARGS.brain_mask)
-                  + ' regrid mask.mif -datatype bit -interp nearest -strides '
+                  + f' regrid {mask_image} -datatype bit -interp nearest -strides '
                   + strides)
-      run.command('mrcalc mask.mif struct.nii.gz 0 -if bet.nii.gz', show=False)
+      run.command(f'mrcalc {mask_image} {struct_image} -mult {bet_image}', show=False)
+
     elif app.ARGS.premasked:
-      os.rename('struct.nii.gz', 'bet.nii.gz')
+      os.rename(struct_image, bet_image)
 
     else:
+      # BET madness ensues
       app.console('No brain mask provided, attempting to generate robust mask')
       ## Try can create a decent brain mask
       # Start with the FOD amplitude image, fill holes
@@ -155,19 +166,22 @@ def execute():
       # Dilate and use to roughly crop structural image. This is so that bet
       # has a better change of a clean segmentation without a bunch of neck etc.
       run.command('maskfilter fod_mask_smooth_regrid.mif dilate -npass 5 - | '
-                  + 'mrcalc - struct.nii.gz 0 -if struct_rough_masked.nii.gz', show=False)
+                  + f'mrcalc - {struct_image} -mult struct_rough_masked.nii.gz', show=False)
       # Brain masking using bet
-      run.command('bet struct_rough_masked.nii.gz bet.nii.gz -r 100 -m ', show=False)
-      run.command('mrconvert bet_mask.nii.gz mask.mif -datatype bit', show=False)
+      run.command(f'{bet_cmd} struct_rough_masked.nii.gz {bet_image} -r 100 -m ', show=False)
+      bet_image = fsl.find_image(bet_image)
+      run.command(f'mrconvert bet_mask{fsl_suffix} {mask_image} -datatype bit', show=False)
 
-    # Registration
+    # Actually run registrtion
     app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
-    run.command('flirt -in ' + path.from_user(app.ARGS.struct[0])
-                 + ' -ref bet.nii.gz '
+    run.command(flirt_cmd + ' -in ' + path.from_user(app.ARGS.struct[0])
+                 +  ' -ref ' + bet_image
                  + f' -dof {DOF} -omat transform_flirt.txt')
     run.command('transformconvert transform_flirt.txt '
-                 + path.from_user(app.ARGS.struct[0]) + ' bet.nii.gz '
+                 + path.from_user(app.ARGS.struct[0]) + ' ' + bet_image
                  + ' flirt_import transform.txt -quiet', show=False)
+
+  # Finish registration branching
 
   ## Cycle through all the atlases
   progress = app.ProgressBar('Mapping tracts')
