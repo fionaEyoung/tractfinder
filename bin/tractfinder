@@ -86,7 +86,12 @@ def execute():
     if os.path.isdir(source):
       app.debug('Atlas input is directory')
       make_dir(dest)
-      atlas_paths = path.all_in_dir(source, dir_path=True)
+      for p in path.all_in_dir(source, dir_path=True):
+        try:
+          h = image.Header(p)
+          if h.is_sh(): atlas_paths.append(p)
+          else: app.console('Skipping non-SH input file \'' + h.name() + '\'')
+        except MRtrixError: pass
       output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + MAP_SUFFIX + os.path.splitext(os.path.basename(in_path))[1]) for in_path in atlas_paths]
       for i, p in reversed(list(enumerate(copy.copy(output_paths)))):
         try: app.check_output_path(p)
@@ -98,6 +103,9 @@ def execute():
           if not (atlas_paths and output_paths):
             raise MRtrixError('No new outputs to create (use -force to overwrite contents of output directory) \'' + dest + '\'')
       app.debug(f'Creating {len(output_paths)} new files')
+    else:
+      app.check_output_path(dest)
+      atlas_paths, output_paths = [source], [dest]
   else:
     # Arbitrary number of atlas / output pairs
     atlas_paths  = app.ARGS.arg_pairs[::2]
