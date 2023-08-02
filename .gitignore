@@ -5,3 +5,4 @@
 *.nii
 *.nii.gz
 build
+test.py
