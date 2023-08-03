@@ -41,6 +41,7 @@ def usage(cmdline): #pylint: disable=unused-variable
                                 choices=['linear', 'exponential'], default='linear')
   virtue_options.add_argument('-scale', metavar='fraction', help='Tumour scale factor (formerly squishfactor) (default: 1)')
   virtue_options.add_argument('-store_lookup', metavar='directory', help='Location for storing/reusing Dt/Db lookup matrices for deformation algorithm. Recommended for speedup if recomputing deformation.')
+  virtue_options.add_argument('-template', help='Provide a template image to define the voxel grid of the output deformation field. By default, the grid of the brain mask is used.')
 
   # General options
   common_options = cmdline.add_argument_group('General tractfinder options')
@@ -74,6 +75,18 @@ def make_dir(path):
 def execute():
   from mrtrix3 import MRtrixError
   from mrtrix3 import algorithm, app, image, path, run, fsl
+
+  if app.ARGS.tumour:
+    from tractfinder import virtue
+
+  ## What steps will we need to do?
+  do_brain_masking = False
+  if (app.ARGS.tumour or (not app.ARGS.transform and not app.ARGS.premasked)):
+    do_brain_masking = True
+    ## TODO: if -struct and -premasked, allow that? then can threshold premasked ? but kinda dodgy, can't be sure what values will be outside the brain
+    if not (app.ARGS.brain_mask or app.ARGS.struct):
+      raise MRtrixError('A brain mask is required for either registration (-transform option not provided) or tumour deformation modelling (-tumour option provided).' +
+                        'Either provide one with -brain_mask or provide a structural image with -struct from which a mask can be generated.')
 
   atlas_paths = []
   output_paths = []
@@ -118,37 +131,46 @@ def execute():
   flirt_cmd = fsl.exe_name('flirt')
   fsl_suffix = fsl.suffix()
 
+  mask_image = 'brain_mask.mif'
+  struct_image = 'struct.nii.gz'
+  bet_image = 'bet' + fsl_suffix
+
   app.make_scratch_dir()
   app.goto_scratch_dir()
 
-  ## Registration
-  if app.ARGS.transform:
-    shutil.copy(path.from_user(app.ARGS.transform, False), 'transform.txt')
+  # Do we have an image which to use as a template for image grid?
+  # Use the template image if provided, otherwise the subject structural
+  template_image = (path.from_user(app.ARGS.template) if app.ARGS.template
+              else path.from_user(app.ARGS.struct[1]) if app.ARGS.struct
+              else None)
 
-  elif app.ARGS.struct:
+  # Take strides from template image, or brain mask, or default to 1,2,3
+  strides = ( image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
+              if app.ARGS.struct
+              else image.Header(path.from_user(app.ARGS.brain_mask, False)).strides()
+              if app.ARGS.brain_mask
+              else [1,2,3] )
+  strides = ','.join(str(s) for s in strides)
 
-    struct_image = 'struct.nii.gz'
-    mask_image = 'mask.mif'
-    bet_image = 'bet' + fsl_suffix
+  if app.ARGS.struct:
+    run.command(f'mrconvert -strides {strides} '
+              + f'{path.from_user(app.ARGS.struct[1])} {struct_image}', show=False)
 
-    ## Attempt robust registration with brain masking
-    strides = image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
-    strides = ','.join(str(s) for s in strides)
-
-    run.command('mrconvert -strides ' + strides + ' '
-                + path.from_user(app.ARGS.struct[1]) + ' ' + struct_image, show=False)
-
+  ## Brain mask: will be needed for either registration or deformation modelling.
+  # Do we need to make one?
+  if do_brain_masking:
     if app.ARGS.brain_mask:
-      # Regrid anyway, to be sure it will match the template image strides
-      run.command(f'mrgrid -template f{struct_image} '
-                  + path.from_user(app.ARGS.brain_mask)
-                  + f' regrid {mask_image} -datatype bit -interp nearest -strides '
-                  + strides)
-      run.command(f'mrcalc {mask_image} {struct_image} -mult {bet_image}', show=False)
-
+      # Regrid if poss, to be sure it will match the template image strides
+      if template_image:
+        run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} '
+                  + f'regrid {mask_image} -datatype bit -interp nearest '
+                  + f'-strides {strides} -template {template_image}', show=False)
+      else:
+        run.command(f'mrconvert -strides {strides} {path.from_user(app.ARGS.brain_mask)} {mask_image}')
     elif app.ARGS.premasked:
-      os.rename(struct_image, bet_image)
-
+      app.warn('Relying on a pre-masked structural image to produce a brain mask for tumour deformation is risky')
+      run.command(f'mrthreshold {path.from_user(app.ARGS.struct[1])} -abs 0 -comparison gt - | '
+                + f'mrconvert - {mask_image} -strides {strides}', show=False)
     else:
       # BET madness ensues
       app.console('No brain mask provided, attempting to generate robust mask')
@@ -160,7 +182,7 @@ def execute():
       # Smooth edges and regrid to structural space
       run.command('mrfilter fod_mask.nii.gz smooth -extent 5 - | '
                   + 'mrthreshold - -abs 0.5 - | '
-                  + 'mrgrid -template struct.nii.gz -interp nearest -strides '
+                  + f'mrgrid -template {struct_image} -interp nearest -strides '
                   + strides
                   + ' - regrid fod_mask_smooth_regrid.mif', show=False)
       # Dilate and use to roughly crop structural image. This is so that bet
@@ -172,6 +194,17 @@ def execute():
       bet_image = fsl.find_image(bet_image)
       run.command(f'mrconvert bet_mask{fsl_suffix} {mask_image} -datatype bit', show=False)
 
+  ## Registration
+  if app.ARGS.transform:
+    shutil.copy(path.from_user(app.ARGS.transform, False), 'transform.txt')
+
+  else:
+    if app.ARGS.premasked:
+      run.command(f'mrconvert -strides {strides} '
+                + f'{path.from_user(app.ARGS.struct[1])} {bet_image}', show=False)
+    elif app.ARGS.brain_mask:
+      run.command(f'mrcalc {mask_image} {struct_image} -mult {bet_image}', show=False)
+
     # Actually run registrtion
     app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
     run.command(flirt_cmd + ' -in ' + path.from_user(app.ARGS.struct[0])
@@ -181,7 +214,13 @@ def execute():
                  + path.from_user(app.ARGS.struct[0]) + ' ' + bet_image
                  + ' flirt_import transform.txt -quiet', show=False)
 
-  # Finish registration branching
+  # Finish masking / registration branching
+
+  ## Tumour deformation modelling
+  if app.ARGS.tumour:
+    app.console('Computing tumour deformation field')
+
+    # Get all images in the same
 
   ## Cycle through all the atlases
   progress = app.ProgressBar('Mapping tracts')
@@ -212,5 +251,5 @@ def execute():
   progress.done()
 
 # Execute the script
-import mrtrix3
+import mrtrix3, tractfinder
 mrtrix3.execute() #pylint: disable=no-member
