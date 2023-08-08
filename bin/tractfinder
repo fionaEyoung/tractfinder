@@ -181,14 +181,13 @@ def execute():
       run.command('fslmaths fod_mask.nii.gz -fillh fod_mask.nii.gz', show=False)
       # Smooth edges and regrid to structural space
       run.command('mrfilter fod_mask.nii.gz smooth -extent 5 - | '
-                  + 'mrthreshold - -abs 0.5 - | '
-                  + f'mrgrid -template {struct_image} -interp nearest -strides '
-                  + strides
-                  + ' - regrid fod_mask_smooth_regrid.mif', show=False)
+               +  'mrthreshold - -abs 0.5 - | '
+               + f'mrgrid - regrid fod_mask_smooth_regrid.mif '
+               + f'-template {struct_image} -interp nearest -strides {strides}', show=False)
       # Dilate and use to roughly crop structural image. This is so that bet
       # has a better change of a clean segmentation without a bunch of neck etc.
       run.command('maskfilter fod_mask_smooth_regrid.mif dilate -npass 5 - | '
-                  + f'mrcalc - {struct_image} -mult struct_rough_masked.nii.gz', show=False)
+               + f'mrcalc - {struct_image} -mult struct_rough_masked.nii.gz', show=False)
       # Brain masking using bet
       run.command(f'{bet_cmd} struct_rough_masked.nii.gz {bet_image} -r 100 -m ', show=False)
       bet_image = fsl.find_image(bet_image)
@@ -213,12 +212,11 @@ def execute():
 
     # Actually run registrtion
     app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
-    run.command(flirt_cmd + ' -in ' + path.from_user(app.ARGS.struct[0])
-                 +  ' -ref ' + bet_image
-                 + f' -dof {DOF} -omat transform_flirt.txt')
-    run.command('transformconvert transform_flirt.txt '
-                 + path.from_user(app.ARGS.struct[0]) + ' ' + bet_image
-                 + ' flirt_import transform.txt -quiet', show=False)
+    run.command(f'{flirt_cmd} -in {path.from_user(app.ARGS.struct[0])} '
+              + f'-ref {bet_image} '
+              + f'-dof {DOF} -omat transform_flirt.txt')
+    run.command(f'transformconvert transform_flirt.txt {path.from_user(app.ARGS.struct[0])} {bet_image} '
+               + 'flirt_import transform.txt -quiet', show=False)
 
   # Finish masking / registration branching
 
