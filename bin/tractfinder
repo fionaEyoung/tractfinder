@@ -41,7 +41,7 @@ def usage(cmdline): #pylint: disable=unused-variable
                                 choices=['linear', 'exponential'], default='linear')
   virtue_options.add_argument('-scale', metavar='fraction', help='Tumour scale factor (formerly squishfactor) (default: 1)')
   virtue_options.add_argument('-store_lookup', metavar='directory', help='Location for storing/reusing Dt/Db lookup matrices for deformation algorithm. Recommended for speedup if recomputing deformation.')
-  virtue_options.add_argument('-template', help='Provide a template image to define the voxel grid of the output deformation field. By default, the grid of the brain mask is used.')
+  virtue_options.add_argument('-template', help='Provide a template image to define the voxel grid of the output maps/segmentations. By default, the grid of the FOD input is used.')
 
   # General options
   common_options = cmdline.add_argument_group('General tractfinder options')
@@ -138,13 +138,7 @@ def execute():
   app.make_scratch_dir()
   app.goto_scratch_dir()
 
-  # Do we have an image which to use as a template for image grid?
-  # Use the template image if provided, otherwise the subject structural
-  template_image = (path.from_user(app.ARGS.template) if app.ARGS.template
-              else path.from_user(app.ARGS.struct[1]) if app.ARGS.struct
-              else None)
-
-  # Take strides from template image, or brain mask, or default to 1,2,3
+  # Take strides from template (=atlas space) image, or brain mask, or default to 1,2,3
   strides = ( image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
               if app.ARGS.struct
               else image.Header(path.from_user(app.ARGS.brain_mask, False)).strides()
@@ -237,15 +231,18 @@ def execute():
 
     progress.increment()
     # Compute inner product
-    ip_command_string = (f'mrcalc -quiet atlas_{i}.mif ' + path.from_user(app.ARGS.input) + ' -mult - | '
-                         +'mrmath -quiet - sum -axis 3 ')
+    ip_command_string = (f'mrcalc atlas_{i}.mif {path.from_user(app.ARGS.input)} -mult - | '
+                         +'mrmath - sum -axis 3 ')
+    if app.ARGS.template:
+      app.console(f'Regridding output to match template image "{app.ARGS.template}"')
+      ip_command_string += f'- | mrgrid - regrid -template {path.from_user(app.ARGS.template)} '
     if app.ARGS.binary:
       app.console(f'Binarising output with threshold {app.ARGS.binary}')
-      ip_command_string += f' - | mrthreshold -abs {app.ARGS.binary} - {path.from_user(output_path)}'
-    else:
-      ip_command_string += path.from_user(output_path)
+      ip_command_string += f'- | mrthreshold - -abs {app.ARGS.binary} '
+    # Finally append the output file to command
+    ip_command_string += path.from_user(output_path)
     run.command(ip_command_string, show=False, force=app.FORCE_OVERWRITE)
-
+    progress.increment()
     i += 1
 
   progress.done()
