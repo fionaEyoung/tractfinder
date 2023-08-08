@@ -18,13 +18,13 @@
 # Script for mapping fibre bundles based on provided tract orientation atlas[es]
 # Written by Fiona Young, 2023
 
-import os, shutil, copy
+import sys, os, shutil, copy
 
 MAP_SUFFIX = '_tractmap'
 DOF = 12
 
-def usage(cmdline): #pylint: disable=unused-variable
-  from mrtrix3 import algorithm, app #pylint: disable=no-name-in-module, import-outside-toplevel
+def usage(cmdline):
+  from mrtrix3 import app
 
   cmdline.set_author('Fiona Young (fiona.young.15@ucl.ac.uk)')
   cmdline.set_synopsis('Map fibre bundles based on tract orientation atlas(es)')
@@ -48,7 +48,6 @@ def usage(cmdline): #pylint: disable=unused-variable
   common_options.add_argument('-transform', help='provide transformation from atlas space to subject space')
   common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space')
   common_options.add_argument('-premasked', action='store_true', help='indicate that the input structural image has been brain masked (otherwise script will perform brain extraction.) Note: the structural image in template space is ALWAYS assumed to be masked')
-  cmdline.flag_mutually_exclusive_options( ['transform', 'struct'], required=True )
   common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
   common_options.add_argument('-suffix', nargs=1, default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only atlas directory as input) (default: {MAP_SUFFIX}')
 
@@ -72,21 +71,35 @@ def make_dir(path):
       raise MRtrixError('Path \'' + path + '\' exists and is not a directory')
     app.debug('Directory \'' + path + '\' already exists')
 
+# adapt behaviour of flag_mutually_exclusive_options() which is not suitable here,
+# as want to check at least one provided, but not mutex. Ignore the "value is different from default"
+# check here: required arguments shouldn't have defaults
+def check_from_required(args_in, required_args, prog=sys.argv[0]):
+  count = sum([bool(getattr(args_in, option, False)) for option in required_args])
+  if not count:
+    sys.stderr.write('\nError: One of the following options must be provided: ' + ', '.join([ '-' + o for o in required_args ]) + '\n')
+    sys.stderr.write('(Consult the help page for more information: ' + prog + ' -help)\n\n')
+    sys.stderr.flush()
+    sys.exit(1)
+
 def execute():
   from mrtrix3 import MRtrixError
   from mrtrix3 import algorithm, app, image, path, run, fsl
-
   if app.ARGS.tumour:
     from tractfinder import virtue
 
+  check_from_required(app.ARGS, ['transform', 'struct'], prog=app.EXEC_NAME)
+
   ## What steps will we need to do?
-  do_brain_masking = False
+  make_brain_mask = False
   if (app.ARGS.tumour or (not app.ARGS.transform and not app.ARGS.premasked)):
-    do_brain_masking = True
+    # We've established we *need* a mask. Do we need to *make* one?
+    if not app.ARGS.brain_mask:
+      make_brain_mask = True
+      if not app.ARGS.struct:
     ## TODO: if -struct and -premasked, allow that? then can threshold premasked ? but kinda dodgy, can't be sure what values will be outside the brain
-    if not (app.ARGS.brain_mask or app.ARGS.struct):
-      raise MRtrixError('A brain mask is required for either registration (-transform option not provided) or tumour deformation modelling (-tumour option provided).' +
-                        'Either provide one with -brain_mask or provide a structural image with -struct from which a mask can be generated.')
+        raise MRtrixError('A brain mask is required for either registration (-transform option not provided) or tumour deformation modelling (-tumour option provided). ' +
+                          'Either provide one with -brain_mask or provide a structural image with -struct from which a mask can be generated.')
 
   atlas_paths = []
   output_paths = []
@@ -127,11 +140,14 @@ def execute():
     for p in output_paths:
       app.check_output_path(p)
 
+  ## Set up filenames and command strings
   bet_cmd = fsl.exe_name('bet')
   flirt_cmd = fsl.exe_name('flirt')
   fsl_suffix = fsl.suffix()
 
-  mask_image = 'brain_mask.mif'
+  mask_image_reg = 'brain_mask_reg.mif'
+  mask_image_def = 'brain_mask_def.mif'
+  tumour_mask = 'tumour_mask.mif'
   struct_image = 'struct.nii.gz'
   bet_image = 'bet' + fsl_suffix
 
@@ -140,10 +156,7 @@ def execute():
 
   # Take strides from template (=atlas space) image, or brain mask, or default to 1,2,3
   strides = ( image.Header(path.from_user(app.ARGS.struct[0], False)).strides()
-              if app.ARGS.struct
-              else image.Header(path.from_user(app.ARGS.brain_mask, False)).strides()
-              if app.ARGS.brain_mask
-              else [1,2,3] )
+              if app.ARGS.struct else [1,2,3] )
   strides = ','.join(str(s) for s in strides)
 
   if app.ARGS.struct:
@@ -152,19 +165,12 @@ def execute():
 
   ## Brain mask: will be needed for either registration or deformation modelling.
   # Do we need to make one?
-  if do_brain_masking:
-    if app.ARGS.brain_mask:
-      # Regrid if poss, to be sure it will match the template image strides
-      if template_image:
-        run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} '
-                  + f'regrid {mask_image} -datatype bit -interp nearest '
-                  + f'-strides {strides} -template {template_image}', show=False)
-      else:
-        run.command(f'mrconvert -strides {strides} {path.from_user(app.ARGS.brain_mask)} {mask_image}')
-    elif app.ARGS.premasked:
+  if make_brain_mask:
+    if app.ARGS.premasked:
       app.warn('Relying on a pre-masked structural image to produce a brain mask for tumour deformation is risky')
       run.command(f'mrthreshold {path.from_user(app.ARGS.struct[1])} -abs 0 -comparison gt - | '
-                + f'mrconvert - {mask_image} -strides {strides}', show=False)
+                + f'mrgrid - regrid {mask_image_def} -strides {strides} -vox 1 -interp nearest -datatype bit', show=False)
+      app.debug(f'{mask_image_def} created from struct image with strides {strides}')
     else:
       # BET madness ensues
       app.console('No brain mask provided, attempting to generate robust mask')
@@ -186,7 +192,10 @@ def execute():
       # Brain masking using bet
       run.command(f'{bet_cmd} struct_rough_masked.nii.gz {bet_image} -r 100 -m ', show=False)
       bet_image = fsl.find_image(bet_image)
-      run.command(f'mrconvert bet_mask{fsl_suffix} {mask_image} -datatype bit', show=False)
+      # If we also need this brain mask for tumour deformation down the line,
+      # convert it now to the correct grid
+      if app.ARGS.tumour:
+        run.command(f'mrgrid bet_mask{fsl_suffix} regrid {mask_image_def} -vox 1 -interp nearest -datatype bit', show=False)
 
   ## Registration
   if app.ARGS.transform:
@@ -197,7 +206,10 @@ def execute():
       run.command(f'mrconvert -strides {strides} '
                 + f'{path.from_user(app.ARGS.struct[1])} {bet_image}', show=False)
     elif app.ARGS.brain_mask:
-      run.command(f'mrcalc {mask_image} {struct_image} -mult {bet_image}', show=False)
+      run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} regrid {mask_image_reg} '
+                + f'-datatype bit -interp nearest -strides {strides} '
+                + f'-template {struct_image}', show=False)
+      run.command(f'mrcalc {mask_image_reg} {struct_image} -mult {bet_image}', show=False)
 
     # Actually run registrtion
     app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
@@ -213,8 +225,12 @@ def execute():
   ## Tumour deformation modelling
   if app.ARGS.tumour:
     app.console('Computing tumour deformation field')
-
-    # Get all images in the same
+    if app.ARGS.brain_mask:
+      run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} regrid {mask_image_def} '
+                 + '-vox 1 -interp nearest -datatype bit', show=False)
+    # Match tumour mask to brain mask grid
+    run.command(f'mrgrid {path.from_user(app.ARGS.tumour)} regrid {tumour_mask} '
+              + f'-template {mask_image_def}')
 
   ## Cycle through all the atlases
   progress = app.ProgressBar('Mapping tracts')
