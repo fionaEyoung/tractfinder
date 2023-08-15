@@ -230,6 +230,9 @@ def execute():
     run.command(f'mrgrid {path.from_user(app.ARGS.tumour)} regrid {tumour_mask} '
               + f'-template {mask_image_def}')
 
+    virtue.get_inputs(tumour_mask, mask_image_def)
+    exit()
+
   ## Cycle through all the atlases
   progress = app.ProgressBar('Mapping tracts')
   i, n = 1, len(atlas_paths)

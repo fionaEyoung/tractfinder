@@ -7,7 +7,7 @@ from nibabel.orientations import apply_orientation, axcodes2ornt, aff2axcodes
 import skimage
 from skimage import measure, morphology
 from skimage.filters import gaussian
-from mrtrix3.io.image import load_mrtrix, save_mrtrix, Image
+from tractfinder.image import load_mrtrix, save_mrtrix, Image
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pyvista as pv
@@ -17,6 +17,10 @@ from scipy.special import lambertw
 def ang(azA, polA, azB, polB):
   return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
 
+
+def get_inputs(tumour_mask, brain_mask):
+  tumour = load_mrtrix(brain_mask)
+  print(f"Tumour mask loaded with voxel size: {tumour.vox}")
 
 
 # Get triangulated surface object from binary volume
