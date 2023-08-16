@@ -8,6 +8,7 @@ import skimage
 from skimage import measure, morphology
 from skimage.filters import gaussian
 from tractfinder.image import load_mrtrix, save_mrtrix, Image
+from tractfinder.utils import c2s, s2c
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pyvista as pv
@@ -17,6 +18,27 @@ from scipy.special import lambertw
 def ang(azA, polA, azB, polB):
   return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
 
+
+def entry_point(tumour_mask, brain_mask, out_path):
+  tumour = load_mrtrix(brain_mask)
+  brain = load_mrtrix(tumour_mask)
+
+  imshape = brain.data.shape
+
+  assert tumour.data.shape == imshape, "Dimension mismatch"
+
+  tumour = np.logical_and(tumour.data, brain.data)
+
+  # All defaults, except exponential (adaptive l)
+  D = compute_radial_deformation(imshape, tumour, brain.data, expon=-1)
+
+  out = Image.empty_as(brain)
+
+  # Black magic that apparently I wrote
+  out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
+              @ out.transform.T)[:,:3].reshape(*imshape, 3)
+
+  save_mrtrix(out_path, out)
 
 
 # Get triangulated surface object from binary volume

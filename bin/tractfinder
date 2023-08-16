@@ -148,6 +148,7 @@ def execute():
   mask_image_reg = 'brain_mask_reg.mif'
   mask_image_def = 'brain_mask_def.mif'
   tumour_mask = 'tumour_mask.mif'
+  def_field_image = 'deformation_field.mif'
   struct_image = 'struct.nii.gz'
   bet_image = 'bet' + fsl_suffix
 
@@ -228,22 +229,36 @@ def execute():
                  + '-vox 1 -interp nearest -datatype bit', show=False)
     # Match tumour mask to brain mask grid
     run.command(f'mrgrid {path.from_user(app.ARGS.tumour)} regrid {tumour_mask} '
-              + f'-template {mask_image_def}')
+              + f'-template {mask_image_def}', show=False)
+
+    virtue.entry_point(tumour_mask, mask_image_def, def_field_image)
 
   ## Cycle through all the atlases
-  progress = app.ProgressBar('Mapping tracts')
   i, n = 1, len(atlas_paths)
+  progress = app.ProgressBar(f'Mapping atlas {i} of {n} to subject')
 
   for atlas_path, output_path in zip(atlas_paths, output_paths):
     progress.increment(f'Mapping atlas {i} of {n} to subject')
+
     # Transform atlas
-    run.command('mrtransform -linear transform.txt'
-                  + ' -reorient_fod yes '
-                  + ' -template ' + path.from_user(app.ARGS.input) + ' '
-                  + path.from_user(atlas_path) + ' '
-                  + path.to_scratch(f'atlas_{i}.mif'), show=False)
+    transf_command_string = (f'mrtransform {path.from_user(atlas_path)} '
+                             +'-linear transform.txt -reorient_fod yes ')
+    if app.ARGS.tumour:
+        # Regridding needs to happen separately, since the mrtransform -template
+        # option is applied to the warp field. We'll split the pipe to allow progress increment
+        transf_command_string += f'-warp {def_field_image} - '
+        tmp_file = run.command(transf_command_string, show=False).stdout
+        progress.increment()
+        run.command(f'mrgrid {tmp_file} regrid -template {path.from_user(app.ARGS.input)} '
+                    + path.to_scratch(f'atlas_{i}.mif'), show=False)
+
+    else:
+        transf_command_string += (f'-template {path.from_user(app.ARGS.input)} '
+                                + path.to_scratch(f'atlas_{i}.mif'))
+        run.command(transf_command_string, show=False)
 
     progress.increment()
+
     # Compute inner product
     ip_command_string = (f'mrcalc atlas_{i}.mif {path.from_user(app.ARGS.input)} -mult - | '
                          +'mrmath - sum -axis 3 ')
@@ -256,7 +271,6 @@ def execute():
     # Finally append the output file to command
     ip_command_string += path.from_user(output_path)
     run.command(ip_command_string, show=False, force=app.FORCE_OVERWRITE)
-    progress.increment()
     i += 1
 
   progress.done()
