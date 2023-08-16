@@ -7,7 +7,7 @@ from nibabel.orientations import apply_orientation, axcodes2ornt, aff2axcodes
 import skimage
 from skimage import measure, morphology
 from skimage.filters import gaussian
-from mrtrix3.io.image import load_mrtrix, save_mrtrix, Image
+from tractfinder.image import load_mrtrix, save_mrtrix, Image
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import pyvista as pv
