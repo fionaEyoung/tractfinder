@@ -19,22 +19,25 @@ def ang(azA, polA, azB, polB):
   return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
 
 
-def entry_point(tumour_mask, brain_mask, out_path):
+# Compute and save deformation from file paths
+# Everything handled in mrtrix3 mif format
+def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
   tumour = load_mrtrix(brain_mask)
   brain = load_mrtrix(tumour_mask)
 
   imshape = brain.data.shape
-
   assert tumour.data.shape == imshape, "Dimension mismatch"
 
   tumour = np.logical_and(tumour.data, brain.data)
 
   # All defaults, except exponential (adaptive l)
-  D = compute_radial_deformation(imshape, tumour, brain.data, expon=-1)
+  D = compute_radial_deformation(imshape, tumour, brain.data, **kwargs)
 
   out = Image.empty_as(brain)
 
   # Black magic that apparently I wrote
+  # Convert deformation values from voxel coords to scanner coordinates (mm)
+  # and reshape to voxel array
   out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
               @ out.transform.T)[:,:3].reshape(*imshape, 3)
 

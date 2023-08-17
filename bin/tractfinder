@@ -30,26 +30,31 @@ def usage(cmdline):
   cmdline.set_synopsis('Map fibre bundles based on tract orientation atlas(es)')
   # cmdline.add_description('')
 
-  cmdline.add_argument('input',help='The input FOD image')
-  cmdline.add_argument('arg_pairs', metavar=['atlas output [atlas output ...]'], help='pairs of atlas / output images. If only one of each is specified and both are directories, all atlas present in the first directory will be mapped and the results will be stored in the second.', nargs='+')
+  cmdline.add_argument('input', help='The input FOD image')
+  cmdline.add_argument('arg_pairs', metavar='atlas output [atlas output ...]', help='pairs of atlas / output images. If only one of each is specified and both are directories, all atlas present in the first directory will be mapped and the results will be stored in the second.', nargs='+')
 
   # Virtue options
-  virtue_options = cmdline.add_argument_group('!!!NOT CURRENTLY IMPLEMENTED!!! Tumour deformation modelling options')
-  virtue_options.add_argument('-brain_mask', metavar='image', help='Provide brain mask. If not provided, will attempt to estimate brain mask based on input FOD image (this is flakey!)')
+  virtue_options = cmdline.add_argument_group('Tumour deformation modelling options')
   virtue_options.add_argument('-tumour', metavar='image', help='Provide tumour mask. This argument is required and sufficient to trigger deformation modelling')
-  virtue_options.add_argument('-k', metavar='type', help='Type of deformation to model. Options are: linear, exponential (default: linear)',
-                                choices=['linear', 'exponential'], default='linear')
-  virtue_options.add_argument('-scale', metavar='fraction', help='Tumour scale factor (formerly squishfactor) (default: 1)')
-  virtue_options.add_argument('-store_lookup', metavar='directory', help='Location for storing/reusing Dt/Db lookup matrices for deformation algorithm. Recommended for speedup if recomputing deformation.')
-  virtue_options.add_argument('-template', help='Provide a template image to define the voxel grid of the output maps/segmentations. By default, the grid of the FOD input is used.')
+  virtue_options.add_argument('-k', metavar='type', help='Type of deformation to model. If using exponential_constant, -l is required. Options are: linear, exponential, exponential_constant (default: exponential)',
+                                choices=['linear', 'exponential', 'exponential_constant'], default='exponential')
+  virtue_options.add_argument('-scale', metavar='fraction', type=float, default=1, help='Tumour scale factor (formerly squishfactor) (default: 1)')
+  virtue_options.add_argument('-distance_lookup', metavar='directory', help='Location for storing/reusing Dt/Db lookup matrices for deformation algorithm. Recommended for speedup if recomputing deformation')
+  virtue_options.add_argument('-l', metavar='value', help=('Specify a value for the expenential decay lambda. When using -k exponential, '
+                                                         + 'the provided value imposes an upper bound on the dynamically determined lambda. '
+                                                         + 'When using -k exponential_constant, lambda is globally set to the given value. '
+                                                         + 'Note that in the latter case, a high value may result in weak deformation and the strictly '
+                                                         + 'non-infiltrating condition may be violated (see Young et al. 2022 for further explanation).'))
 
   # General options
   common_options = cmdline.add_argument_group('General tractfinder options')
   common_options.add_argument('-transform', help='provide transformation from atlas space to subject space')
   common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space')
   common_options.add_argument('-premasked', action='store_true', help='indicate that the input structural image has been brain masked (otherwise script will perform brain extraction.) Note: the structural image in template space is ALWAYS assumed to be masked')
+  common_options.add_argument('-brain_mask', metavar='image', help='Provide brain mask. If not provided, will attempt to estimate brain mask based on input FOD image (this is flakey!)')
   common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
   common_options.add_argument('-suffix', nargs=1, default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only atlas directory as input) (default: {MAP_SUFFIX}')
+  common_options.add_argument('-template', help='Provide a template image to define the voxel grid of the output maps/segmentations. By default, the grid of the FOD input is used.')
 
   # Citations
   cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
@@ -86,6 +91,8 @@ def execute():
     from tractfinder import virtue
 
   check_from_required(app.CMDLINE, app.ARGS, ['transform', 'struct'])
+  if app.ARGS.tumour and app.ARGS.k == 'exponential_constant' and not app.ARGS.l:
+    app.CMDLINE.error('-l is required when using -k exponential_constant')
 
   ## What steps will we need to do?
   make_brain_mask = False
@@ -136,6 +143,8 @@ def execute():
     output_paths = app.ARGS.arg_pairs[1::2]
     for p in output_paths:
       app.check_output_path(p)
+
+  if app.ARGS.distance_lookup: make_dir(app.ARGS.distance_lookup)
 
   ## Set up filenames and command strings
   bet_cmd = fsl.exe_name('bet')
@@ -228,7 +237,10 @@ def execute():
     run.command(f'mrgrid {path.from_user(app.ARGS.tumour)} regrid {tumour_mask} '
               + f'-template {mask_image_def}', show=False)
 
-    virtue.entry_point(tumour_mask, mask_image_def, def_field_image)
+    virtue.entry_point(tumour_mask, mask_image_def, def_field_image,
+                       expon=-1 if app.ARGS.k=='exponential' else None,
+                       squish=app.ARGS.scale,
+                       save_lookup=path.from_user(app.ARGS.distance_lookup))
 
   ## Cycle through all the atlases
   i, n = 1, len(atlas_paths)
@@ -273,5 +285,5 @@ def execute():
   progress.done()
 
 # Execute the script
-import mrtrix3, tractfinder
+import mrtrix3
 mrtrix3.execute() #pylint: disable=no-member
