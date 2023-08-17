@@ -74,13 +74,10 @@ def make_dir(path):
 # adapt behaviour of flag_mutually_exclusive_options() which is not suitable here,
 # as want to check at least one provided, but not mutex. Ignore the "value is different from default"
 # check here: required arguments shouldn't have defaults
-def check_from_required(args_in, required_args, prog=sys.argv[0]):
+def check_from_required(parser, args_in, required_args):
   count = sum([bool(getattr(args_in, option, False)) for option in required_args])
   if not count:
-    sys.stderr.write('\nError: One of the following options must be provided: ' + ', '.join([ '-' + o for o in required_args ]) + '\n')
-    sys.stderr.write('(Consult the help page for more information: ' + prog + ' -help)\n\n')
-    sys.stderr.flush()
-    sys.exit(1)
+    parser.error('One of the following options must be provided: ' + ', '.join([ '-' + o for o in required_args ]))
 
 def execute():
   from mrtrix3 import MRtrixError
@@ -88,7 +85,7 @@ def execute():
   if app.ARGS.tumour:
     from tractfinder import virtue
 
-  check_from_required(app.ARGS, ['transform', 'struct'], prog=app.EXEC_NAME)
+  check_from_required(app.CMDLINE, app.ARGS, ['transform', 'struct'])
 
   ## What steps will we need to do?
   make_brain_mask = False
@@ -98,7 +95,7 @@ def execute():
       make_brain_mask = True
       if not app.ARGS.struct:
     ## TODO: if -struct and -premasked, allow that? then can threshold premasked ? but kinda dodgy, can't be sure what values will be outside the brain
-        raise MRtrixError('A brain mask is required for either registration (-transform option not provided) or tumour deformation modelling (-tumour option provided). ' +
+        app.CMDLINE.error('A brain mask is required for either registration (-transform option not provided) or tumour deformation modelling (-tumour option provided). ' +
                           'Either provide one with -brain_mask or provide a structural image with -struct from which a mask can be generated.')
 
   atlas_paths = []
