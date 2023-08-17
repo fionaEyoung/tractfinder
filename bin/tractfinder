@@ -253,6 +253,7 @@ def execute():
     transf_command_string = (f'mrtransform {path.from_user(atlas_path)} '
                              +'-linear transform.txt -reorient_fod yes ')
     if app.ARGS.tumour:
+        app.console('Applying tumour deformation to atlas')
         # Regridding needs to happen separately, since the mrtransform -template
         # option is applied to the warp field. We'll split the pipe to allow progress increment
         transf_command_string += f'-warp {def_field_image} - '
@@ -262,6 +263,7 @@ def execute():
                     + path.to_scratch(f'atlas_{i}.mif'), show=False)
 
     else:
+        app.console('Transforming atlas')
         transf_command_string += (f'-template {path.from_user(app.ARGS.input)} '
                                 + path.to_scratch(f'atlas_{i}.mif'))
         run.command(transf_command_string, show=False)

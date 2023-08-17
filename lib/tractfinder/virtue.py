@@ -2,22 +2,15 @@
 # Author: Fiona Young
 import os
 import numpy as np
-import nibabel as nib
-from nibabel.orientations import apply_orientation, axcodes2ornt, aff2axcodes
-import skimage
-from skimage import measure, morphology
-from skimage.filters import gaussian
-from tractfinder.image import load_mrtrix, save_mrtrix, Image
-from tractfinder.utils import c2s, s2c
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-import pyvista as pv
 from scipy.special import lambertw
 
-# Quick util function for getting angle between angle between two polar points
-def ang(azA, polA, azB, polB):
-  return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
+from skimage import measure, morphology
+from skimage.filters import gaussian
+import pyvista as pv
 
+from tractfinder.image import load_mrtrix, save_mrtrix, Image
+from tractfinder.utils import c2s, s2c, ang, info
+from mrtrix3 import app
 
 # Compute and save deformation from file paths
 # Everything handled in mrtrix3 mif format
@@ -124,7 +117,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
     """
     Grow tumour using radial growth algorithm
     inputs
-    image: input image volume
+    imshape: array shape for deformation field
     tumour_mask: volume of segmented tumour region
     brain_mask: volume of brain region excluding skull
     outputs
@@ -147,8 +140,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
     if S_override is not None:
         S = S_override
 
-    if v > 1:
-        print(f"Tumour seed voxel: {S}")
+    app.debug(f"Tumour seed voxel: {S}")
 
     # Tumour surface and face centroids
     Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=1000)
@@ -172,8 +164,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
 
     if (Dt is None) or (Db is None):
 
-        if v > 0:
-            print("Computing Dt and Db lookup tables...")
+        app.debug("Computing Dt and Db lookup tables...")
 
         # Spherical angles of vectors from tumour seed to image grid coordinates
         _, ELp, AZp = c2s(SP).T # Use transpose to unpack columns
@@ -247,7 +238,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
                 c = np.exp(-l)/(np.exp(-l)-1)
 
             if not expon == -1:
-                print(f"lambda min: {min(l):.1f}, lambda max: {max(l):.1f}. Requested lambda: {expon:.1f}")
+                info(f"lambda min: {min(l):.1f}, lambda max: {max(l):.1f}. Requested lambda: {expon:.1f}")
                 l = np.minimum(l, expon)
 
         else:
@@ -258,9 +249,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
     if mode == 'forward':
 
         if expon: # Exponential deformation decay
-            if v > 0:
-                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
-                      squishfactor {squish}""")
+            app.debug(f'Computing exponential tissue deformation with decay lambda = {expon} and scalefactor {squish}')
 
             k = np.zeros(Dp.shape)
             # Normalisation constant
@@ -272,8 +261,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
             return (field=='deformation')*P + e * k[:, None] * Dt[:, None]
 
         else: # Linear deformation decay
-            if v > 0:
-                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            app.debug(f'Computing linear tissue deformation with squishfactor {squish}')
             k = 1 - (Dp/Db)
             k[~m] = 0
 
@@ -284,9 +272,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
 
         # Calculate displacement factor k
         if expon: # Exponential deformation decay
-            if v > 0:
-                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
-                      squishfactor {squish}""")
+            info(f'Computing exponential tissue deformation with decay lambda = {expon} and scalefactor {squish}')
 
             k = np.zeros(Dp.shape)
             c = (np.exp(-l))/(np.exp(-l)-1)
@@ -298,8 +284,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
             return (field=='deformation')*P - e * k[:, None]
 
         else: # Linear deformation decay
-            if v > 0:
-                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            app.debug(f'Computing linear tissue deformation with squishfactor {squish}')
             k = 1 - ((Dp - Dt)/(Db - Dt))
             k[~m] = 0
 
@@ -308,9 +293,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
     elif mode == 'both':
 
         if expon: # Exponential deformation decay
-            if v > 0:
-                print(f"""Computing exponential tissue deformation with decay lambda = {expon} and
-                      squishfactor {squish}""")
+            app.debug(f'Computing exponential tissue deformation with decay lambda = {expon} and scalefactor {squish}')
 
             k = np.zeros(Dp.shape)
             # Normalisation constant
@@ -329,8 +312,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
             return (D_forward, D_reverse)
 
         else: # Linear deformation decay
-            if v > 0:
-                print(f"""Computing linear tissue deformation with squishfactor {squish}""")
+            app.debug(f'Computing linear tissue deformation with squishfactor {squish}')
 
             k = 1 - (Dp/Db)
             k[~m] = 0
@@ -344,4 +326,3 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
 
     else:
         raise ValueError(f"Unsupported mode option {mode}")
-    #TODO: return Displacement field option

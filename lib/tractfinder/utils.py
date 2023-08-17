@@ -1,5 +1,17 @@
-
+import sys
 import numpy as np
+from mrtrix3 import app, ANSI
+
+# Higher than console(), lower than debug()
+def info(text):
+  if app.VERBOSITY > 1:
+    sys.stderr.write(app.EXEC_NAME + ': ' + ANSI.console + text + ANSI.clear + '\n')
+
+## Utility functions for angles and coordinates
+
+# Quick util function for getting angle between two polar points
+def ang(azA, polA, azB, polB):
+  return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
 
 def c2s(*args):
     # Arguments supplied as single Nx3 array
