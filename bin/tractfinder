@@ -240,7 +240,7 @@ def execute():
     virtue.entry_point(tumour_mask, mask_image_def, def_field_image,
                        expon=-1 if app.ARGS.k=='exponential' else None,
                        squish=app.ARGS.scale,
-                       save_lookup=path.from_user(app.ARGS.distance_lookup))
+                       save_lookup=path.from_user(app.ARGS.distance_lookup) if app.ARGS.distance_lookup else None)
 
   ## Cycle through all the atlases
   i, n = 1, len(atlas_paths)
