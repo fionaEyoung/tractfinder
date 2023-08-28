@@ -23,8 +23,25 @@ def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
 
   tumour = np.logical_and(tumour.data, brain.data)
 
-  # All defaults, except exponential (adaptive l)
-  D = compute_radial_deformation(imshape, tumour, brain.data, **kwargs)
+  save_lookup = kwargs['save_lookup']
+  # Load Db/Dt lookup arrays if available
+  Dt, Db = None, None
+  if save_lookup:
+    DbDt_path = os.path.join(save_lookup, 'DbDt.npz')
+    if os.path.exists(DbDt_path):
+      lookups_zipped = np.load(DbDt_path)
+      Db, Dt = (lookups_zipped['Db'], lookups_zipped['Dt'])
+    else:
+      # TODO: Deprecate individual file support
+      Dt_path = os.path.join(save_lookup, 'Dt.npy')
+      Db_path = os.path.join(save_lookup, 'Db.npy')
+      if os.path.exists(Dt_path):
+        Dt = Dt_path
+      if os.path.exists(Db_path):
+        Db = Db_path
+
+  # All defaults
+  D = compute_radial_deformation(imshape, tumour, brain.data, Db=Db, Dt=Dt, **kwargs)
 
   out = Image.empty_as(brain)
 
@@ -195,8 +212,6 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
 
             Db = distances[np.floor(AZp/d_theta).astype(int)+200,
                            np.floor(ELp/d_theta).astype(int)].flatten()
-            if save_lookup:
-                np.save(os.path.join(save_lookup, "Db.npy"), Db)
 
         if Dt is None:
             ## Lookup tables for Dt: distance along e from seed to tumour surface
@@ -216,8 +231,9 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
             # value of Dt for that gridpoint
             Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
                            np.floor(ELp/d_theta).astype(int)].flatten()
-            if save_lookup:
-                np.save(os.path.join(save_lookup, "Dt.npy"), Dt)
+
+        if save_lookup:
+          np.savez_compressed(os.path.join(save_lookup, 'DbDt.npz'), Db=Db, Dt=Dt)
 
     # Logical mask for brain region voxels
     m = brain_mask.flatten().astype(bool)
