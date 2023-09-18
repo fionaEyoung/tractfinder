@@ -41,7 +41,7 @@ cd tractfinder
 echo ../mrtrix3/build > build
 ```
 
-#### Linking pre-compiled MRtrix3
+#### Linking pre-compiled MRtrix3
 
 If you downloaded MRtrix3 directly as a pre-compiled package from the website, rather than building from source, then you will need to create a dummy `build` file:
 
