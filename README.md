@@ -11,7 +11,7 @@ At a minimum, you'll need an up-to-date installation of [MRtrix3](https://github
 Tractfinder also uses FSL's [`flirt`](https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT) to perform MNI registration. If you already have an (affine) registration transform for your data, then this step can be skipped.
 Otherwise, an up-to-date installation of [FSL](https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/) is required.
 
-### Installing tractfinder
+### Installing tractfinder (Unix)
 
 The script `bin/tractfinder` is written as an external module against the MRtrix3 python library.
 To install tractfinder, first clone this repository:
@@ -22,7 +22,12 @@ $ git clone https://github.com/fionaEyoung/tractfinder.git
 
 Next, link the tractfinder repository with your MRtrix3 installation. See MRtrix's [guide on external modules](https://mrtrix.readthedocs.io/en/latest/tips_and_tricks/external_modules.html) for more information.
 
-You will need the path to the MRtrix3 `build` script, *relative to your tracfinder directory*. Assuming your `mrtrix3` and `tractfinder` directories are in the same location, option 1 is to create a symbolic link:
+You will need the path to the MRtrix3 `build` script, *relative to your tractfinder directory*.
+
+> [!NOTE]
+> The following instructions assume an MRtrix3 `build` file exists, which is automatically true for installations of MRtrix3 that have been [built from source](https://mrtrix.readthedocs.io/en/latest/installation/build_from_source.html). See [the end of this section](#linking-pre-compiled-mrtrix3) if you downloaded MRtrix3 as a [pre-compiled package](https://www.mrtrix.org/download/).
+
+Assuming your `mrtrix3` and `tractfinder` directories are in the same location, option 1 is to create a symbolic link:
 
 ```bash
 cd tractfinder
@@ -34,6 +39,21 @@ alternatively, using a textfile:
 ```bash
 cd tractfinder
 echo ../mrtrix3/build > build
+```
+
+#### Linking pre-compiled MRtrix3
+
+If you downloaded MRtrix3 directly as a pre-compiled package from the website, rather than building from source, then you will need to create a dummy `build` file:
+
+1. Locate your MRtrix3 installation. This will likely be in `/usr/local/mrtrix` for a Unix system.
+2. Create an empty file called `build` in this location. The contents of the file is irrelevant! You made need admin privilages to create the file, i.e.:
+```
+sudo touch /usr/local/mrtrix/build
+```
+3. Follow the linking instructions above, replacing the relevant path with that of the file you just created, e.g.:
+```bash
+cd tractfinder
+echo /usr/local/mrtrix/build > build
 ```
 
 ### Configuring path
