@@ -12,6 +12,8 @@ from tractfinder.image import load_mrtrix, save_mrtrix, Image
 from tractfinder.utils import c2s, s2c, ang, info
 from mrtrix3 import app
 
+import gc
+
 # Compute and save deformation from file paths
 # Everything handled in mrtrix3 mif format
 def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
@@ -198,42 +200,46 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
             ## Lookup tables for Dh: distance along e from seed to brain surface
 
             # Spherical angles connecting seed to brain hull centroids
-            _, ELb, AZb = c2s(SCb).T
+            _, EL_, AZ_ = c2s(SCb).T
 
             # Compute angles between gridded angles and brain hull centroids
-            PHI =  ang( AZb[None,:], ELb[None,:],
+            PHI =  ang( AZ_[None,:], EL_[None,:],
                         az.reshape((-1,1)), pol.reshape((-1,1))
-                        ).reshape((400,200,-1))
+                        ).reshape((n,n//2,-1))
             # Closest brain hull triangle for each angular interval and lookuptable for
             # Db for evenly spaced angles
             distances = Dbc[PHI.argmin(axis=2)]
             # Now find the closest grid angle for each image gridpoint and look up the
             # value of Db for that gridpoint
 
-            Db = distances[np.floor(AZp/d_theta).astype(int)+200,
+            Db = distances[np.floor(AZp/d_theta).astype(int)+(n//2),
                            np.floor(ELp/d_theta).astype(int)].flatten()
 
         if Dt is None:
             ## Lookup tables for Dt: distance along e from seed to tumour surface
 
             # Spherical angles connecting seed to tumour surface centroids
-            _, ELt, AZt = c2s(SCt).T
+            _, EL_, AZ_ = c2s(SCt).T
 
             # Compute angles between gridded angles and tumour surface centroids
-            PHI =  ang( AZt[None,:], ELt[None,:],
+            PHI =  ang( AZ_[None,:], EL_[None,:],
                         az.reshape((-1,1)), pol.reshape((-1,1))
-                        ).reshape((400,200,-1))
+                        ).reshape((n,n//2,-1))
             # Closest tumour surface triangle for each angular interval and lookuptable for
             # Dt for evenly spaced angles
             distances = Dtc[PHI.argmin(axis=2)]
 
             # Now find the closest grid angle for each image gridpoint and look up the
             # value of Dt for that gridpoint
-            Dt = distances[np.floor(AZp/d_theta).astype(int)+200,
+            Dt = distances[np.floor(AZp/d_theta).astype(int)+(n//2),
                            np.floor(ELp/d_theta).astype(int)].flatten()
 
         if save_lookup:
           np.savez_compressed(os.path.join(save_lookup, 'DbDt.npz'), Db=Db, Dt=Dt)
+
+        # Clean up after lookup table computation
+        del ELp, AZp, EL_, AZ_, az, pol, PHI, distances
+        gc.collect()
 
     # Logical mask for brain region voxels
     m = brain_mask.flatten().astype(bool)

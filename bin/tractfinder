@@ -199,9 +199,11 @@ def execute():
       run.command(f'{bet_cmd} struct_rough_masked.nii.gz {bet_image} -r 100 -m ', show=False)
       bet_image = fsl.find_image(bet_image)
       # If we also need this brain mask for tumour deformation down the line,
-      # convert it now to the correct grid
+      # convert it now to the correct grid and crop image to reduce file size
       if app.ARGS.tumour:
-        run.command(f'mrgrid bet_mask{fsl_suffix} regrid {mask_image_def} -vox 1 -interp nearest -datatype bit', show=False)
+        tmpfile = path.name_temporary('.mif')
+        run.command(f'mrgrid bet_mask{fsl_suffix} regrid {tmpfile} -vox 1 -interp nearest -datatype bit', show=False)
+        run.command(f'mrgrid {tmpfile} crop -mask {tmpfile} {mask_image_def} -datatype bit', show=False)
 
   ## Registration
   if app.ARGS.transform:
@@ -231,8 +233,12 @@ def execute():
   if app.ARGS.tumour:
     app.console('Computing tumour deformation field')
     if app.ARGS.brain_mask:
-      run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} regrid {mask_image_def} '
+      # Regrid and crop
+      tmpfile = path.name_temporary('.mif')
+      run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} regrid {tmpfile} '
                  + '-vox 1 -interp nearest -datatype bit', show=False)
+      run.command(f'mrgrid {tmpfile} crop -mask {tmpfile} {mask_image_def} '
+                 + '-datatype bit', show=False)
     # Match tumour mask to brain mask grid
     run.command(f'mrgrid {path.from_user(app.ARGS.tumour)} regrid {tumour_mask} '
               + f'-template {mask_image_def} -interp nearest -datatype bit', show=False)
