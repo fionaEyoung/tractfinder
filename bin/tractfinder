@@ -235,7 +235,7 @@ def execute():
                  + '-vox 1 -interp nearest -datatype bit', show=False)
     # Match tumour mask to brain mask grid
     run.command(f'mrgrid {path.from_user(app.ARGS.tumour)} regrid {tumour_mask} '
-              + f'-template {mask_image_def}', show=False)
+              + f'-template {mask_image_def} -interp nearest -datatype bit', show=False)
 
     virtue.entry_point(tumour_mask, mask_image_def, def_field_image,
                        expon=-1 if app.ARGS.k=='exponential' else None,

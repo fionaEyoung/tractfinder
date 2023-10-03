@@ -15,8 +15,8 @@ from mrtrix3 import app
 # Compute and save deformation from file paths
 # Everything handled in mrtrix3 mif format
 def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
-  tumour = load_mrtrix(brain_mask)
-  brain = load_mrtrix(tumour_mask)
+  tumour = load_mrtrix(tumour_mask)
+  brain  = load_mrtrix(brain_mask)
 
   imshape = brain.data.shape
   assert tumour.data.shape == imshape, "Dimension mismatch"
@@ -30,7 +30,7 @@ def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
     DbDt_path = os.path.join(save_lookup, 'DbDt.npz')
     if os.path.exists(DbDt_path):
       lookups_zipped = np.load(DbDt_path)
-      Db, Dt = (lookups_zipped['Db'], lookups_zipped['Dt'])
+      Db, Dt = lookups_zipped['Db'], lookups_zipped['Dt']
     else:
       # TODO: Deprecate individual file support
       Dt_path = os.path.join(save_lookup, 'Dt.npy')
