@@ -33,14 +33,28 @@ def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
     if os.path.exists(DbDt_path):
       lookups_zipped = np.load(DbDt_path)
       Db, Dt = lookups_zipped['Db'], lookups_zipped['Dt']
+      try:
+        s = tuple(lookups_zipped['shape'])
+        if not s == Db.shape == Dt.shape:
+          Dt, Db = None, None
+      except KeyError:
+        if not np.prod(imshape) == Db.size == Dt.size:
+          Dt, Db = None, None
+      finally:
+        if Dt is None or Db is None:
+          app.warn("Precomputed Db and Dt don't match input brain mask grid. They will be recomputed and overwritten")
     else:
       # TODO: Deprecate individual file support
       Dt_path = os.path.join(save_lookup, 'Dt.npy')
       Db_path = os.path.join(save_lookup, 'Db.npy')
-      if os.path.exists(Dt_path):
-        Dt = Dt_path
-      if os.path.exists(Db_path):
-        Db = Db_path
+      if os.path.exists(Dt_path): Dt = np.load(Dt_path)
+      if os.path.exists(Db_path): Db = np.load(Db_path)
+      try:
+        if not np.prod(imshape) == Db.size == Dt.size:
+          Dt, Db = None, None
+          app.warn("Precomputed Db and Dt don't match input brain mask grid. They will be recomputed and overwritten")
+      except AttributeError:
+        Dt, Db = None, None
 
   # All defaults
   D = compute_radial_deformation(imshape, tumour, brain.data, Db=Db, Dt=Dt, **kwargs)
@@ -235,7 +249,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
                            np.floor(ELp/d_theta).astype(int)].flatten()
 
         if save_lookup:
-          np.savez_compressed(os.path.join(save_lookup, 'DbDt.npz'), Db=Db, Dt=Dt)
+          np.savez_compressed(os.path.join(save_lookup, 'DbDt.npz'), Db=Db, Dt=Dt, shape=imshape)
 
         # Clean up after lookup table computation
         del ELp, AZp, EL_, AZ_, az, pol, PHI, distances
