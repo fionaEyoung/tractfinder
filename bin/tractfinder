@@ -45,6 +45,8 @@ def usage(cmdline):
                                                          + 'When using -k exponential_constant, lambda is globally set to the given value. '
                                                          + 'Note that in the latter case, a high value may result in weak deformation and the strictly '
                                                          + 'non-infiltrating condition may be violated (see Young et al. 2022 for further explanation).'))
+  virtue_options.add_argument('-deformation_field', metavar='image', help='Store computed tumour deformation field.')
+  virtue_options.add_argument('-deformation_only', action='store_true', help='Only compute tumour deformation modelling, then exit.')
 
   # General options
   common_options = cmdline.add_argument_group('General tractfinder options')
@@ -90,7 +92,8 @@ def execute():
   if app.ARGS.tumour:
     from tractfinder import virtue
 
-  check_from_required(app.CMDLINE, app.ARGS, ['transform', 'struct'])
+  if not app.ARGS.deformation_only:
+    check_from_required(app.CMDLINE, app.ARGS, ['transform', 'struct'])
   if app.ARGS.tumour and app.ARGS.k == 'exponential_constant' and not app.ARGS.l:
     app.CMDLINE.error('-l is required when using -k exponential_constant')
 
@@ -205,30 +208,6 @@ def execute():
         run.command(f'mrgrid bet_mask{fsl_suffix} regrid {tmpfile} -vox 1 -interp nearest -datatype bit', show=False)
         run.command(f'mrgrid {tmpfile} crop -mask {tmpfile} {mask_image_def} -datatype bit', show=False)
 
-  ## Registration
-  if app.ARGS.transform:
-    shutil.copy(path.from_user(app.ARGS.transform, False), 'transform.txt')
-
-  else:
-    if app.ARGS.premasked:
-      run.command(f'mrconvert -strides {strides} '
-                + f'{path.from_user(app.ARGS.struct[1])} {bet_image}', show=False)
-    elif app.ARGS.brain_mask:
-      run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} regrid {mask_image_reg} '
-                + f'-datatype bit -interp nearest -strides {strides} '
-                + f'-template {struct_image}', show=False)
-      run.command(f'mrcalc {mask_image_reg} {struct_image} -mult {bet_image}', show=False)
-
-    # Actually run registrtion
-    app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
-    run.command(f'{flirt_cmd} -in {path.from_user(app.ARGS.struct[0])} '
-              + f'-ref {bet_image} '
-              + f'-dof {DOF} -omat transform_flirt.txt')
-    run.command(f'transformconvert transform_flirt.txt {path.from_user(app.ARGS.struct[0])} {bet_image} '
-               + 'flirt_import transform.txt -quiet', show=False)
-
-  # Finish masking / registration branching
-
   ## Tumour deformation modelling
   if app.ARGS.tumour:
     app.console('Computing tumour deformation field')
@@ -247,6 +226,35 @@ def execute():
                        expon=-1 if app.ARGS.k=='exponential' else None,
                        squish=app.ARGS.scale,
                        save_lookup=path.from_user(app.ARGS.distance_lookup) if app.ARGS.distance_lookup else None)
+    if app.ARGS.deformation_field:
+      # Convert instead of move, incase different format requested
+      run.command(f'mrconvert {def_field_image} {path.from_user(app.ARGS.deformation_field)}', force=app.FORCE_OVERWRITE)
+    if app.ARGS.deformation_only:
+      return
+
+  ## Registration
+  if app.ARGS.transform:
+    shutil.copy(path.from_user(app.ARGS.transform, False), 'transform.txt')
+
+  else:
+    if app.ARGS.premasked:
+      run.command(f'mrconvert -strides {strides} '
+                + f'{path.from_user(app.ARGS.struct[1])} {bet_image}', show=False)
+    elif app.ARGS.brain_mask:
+      run.command(f'mrgrid {path.from_user(app.ARGS.brain_mask)} regrid {mask_image_reg} '
+                + f'-datatype bit -interp nearest -strides {strides} '
+                + f'-template {struct_image}', show=False)
+      run.command(f'mrcalc {mask_image_reg} {struct_image} -mult {bet_image}', show=False)
+
+    # Actually run registration
+    app.console(f'Running FLIRT registration with {DOF} degrees of freedom')
+    run.command(f'{flirt_cmd} -in {path.from_user(app.ARGS.struct[0])} '
+              + f'-ref {bet_image} '
+              + f'-dof {DOF} -omat transform_flirt.txt')
+    run.command(f'transformconvert transform_flirt.txt {path.from_user(app.ARGS.struct[0])} {bet_image} '
+               + 'flirt_import transform.txt -quiet', show=False)
+
+  # Finish masking / registration branching
 
   ## Cycle through all the atlases
   i, n = 1, len(atlas_paths)
