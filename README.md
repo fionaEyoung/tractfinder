@@ -34,7 +34,7 @@ cd tractfinder
 ln -s ../mrtrix3/build
 ```
 
-alternatively, using a textfile:
+alternatively, using a text file:
 
 ```bash
 cd tractfinder
@@ -58,13 +58,13 @@ echo /usr/local/mrtrix/build > build
 
 ### Configuring path
 
-You can always invoke the tractfinder script as `<path/to>/tractfinder/bin/tractfinder`. In order to enable envoking the command using `tractfinder` alone, add it's `bin` directory to your path (replace `<path/to>` with the appropriate location, e.g. `~` if you have installed tractfinder in your home directory):
+You can always invoke the tractfinder script as `<path/to>/tractfinder/bin/tractfinder`. In order to enable invoking the command using `tractfinder` alone, add it's `bin` directory to your path (replace `<path/to>` with the appropriate location, e.g. `~` if you have installed tractfinder in your home directory):
 
 ```bash
 export PATH=$PATH:<path/to>/tractfinder/bin
 ```
 
-## Getting started
+## User guide
 
 ### Tract atlases
 
@@ -83,7 +83,8 @@ In the latter case, any valid SH image in atlas directory will be mapped to the 
 
 Tractfinder involves alignment of an atlas in template space with the target image.
 To this end, you **must** either provide an affine transformation ([in MRtrix3 format](https://mrtrix.readthedocs.io/en/latest/reference/commands/transformconvert.html)) using the `-transform` option or a pair of structural images (in template and subject space respectively) using the `-struct` option.
-Note: the second argument provided to `-struct` is assumed to be coregistered with the corresponding diffusion space (i.e. the input FOD image).
+> [!NOTE]
+> the second argument provided to `-struct` is assumed to be co-registered with the corresponding diffusion space (i.e. the input FOD image).
 
 #### Examples
 
@@ -131,7 +132,15 @@ tractfinder_output/
 
 ### Tumour deformation
 
-✨ coming soon ✨
+The tumour deformation functionality is currently under development, and may not be stable.
+To use it, checkout the `deformation_modelling` branch:
+
+```bash
+cd tractfinder
+git checkout deformation_modelling
+```
+
+Full user guide [here](https://github.com/fionaEyoung/tractfinder/tree/deformation_modelling#tumour-deformation).
 
 ### Shell script [legacy]
 
