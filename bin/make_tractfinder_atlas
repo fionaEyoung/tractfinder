@@ -29,21 +29,20 @@ def usage(cmdline): #pylint: disable=unused-variable
   cmdline.add_description('This command requires a list of training streamlines, which can be provided in one of two ways.')
   cmdline.add_description('Option 1: Directly provide a list of streamlines as the first positional argument.')
   cmdline.add_description('Option 2: Provide a list of subject prefixes as the first positional argument and the corresponding common suffix (same for all subjects) via the -streamlines option')
-  cmdline.add_description('In both cases streamline may already be in template space, or a transform to template space can be provided via the -transform option.')
-  cmdline.add_description('The substitution keywords "IN, NAME, PRE, UNI" are supported for the -streamlines and -transform options, akin to the MRtrix3 "for_each" program.')
-  cmdline.add_description('See "for_each -help" for more details. In addition to the for_each keywords, the additional keyword "ROOT" is supported, such that ROOT/NAME = IN (if IN is not already a directory)')
+  cmdline.add_description('In both cases streamlines may already be in template space, or a transform to template space can be provided via the -transform option.')
+  cmdline.add_description('The substitution keywords "IN, NAME, PRE, UNI" are supported for the -streamlines and -transform options, akin to the MRtrix3 "for_each" program. See "for_each -help" for more details. In addition to the for_each keywords, the additional keyword "ROOT" is supported, such that ROOT/NAME = IN (if IN is not already a directory)')
 
   cmdline.add_example_usage('Directly provide list of streamline bundles in template space',
                             f'{app.EXEC_NAME} folder/sub-*/my_tract_mni.tck my_tract_atlas.mif.gz',
                             'If "folder" contains the subject directories "sub-001", "sub-002", ..., this will create an atlas from every existing file called "my_tract_mni.tck" in each subject directory.')
   cmdline.add_example_usage('Provide list of subject directories and a streamline file pattern',
                             f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract_mni.tck ',
-                            'Creates and atlas from every file matching folder/sub-*/my_tract_mni.tck')
+                            'Creates an atlas from every file matching folder/sub-*/my_tract_mni.tck')
   cmdline.add_example_usage('Provide list of subject directories with streamline (in subject space) and transform file patterns',
-                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract_mni.tck -transform IN/t_2_mni.txt',
-                            'Creates and atlas from every file matching folder/sub-*/my_tract_mni.tck, after first transforming each bundle to template space using the corresponding affine transform folder/sub-*/t_2_mni.txt')
+                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract.tck -transform IN/t_2_mni.txt',
+                            'Creates and atlas from every file matching folder/sub-*/my_tract.tck, after first transforming each bundle to template space using the corresponding affine transform folder/sub-*/t_2_mni.txt')
   cmdline.add_example_usage('Provide list of subject directories with streamline (in subject space) and transform file patterns',
-                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract_mni.tck -transform IN/t_sub-UNI_2_mni.txt',
+                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract.tck -transform IN/t_sub-UNI_2_mni.txt',
                             'As above, but allowing for subject specific file patterns, e.g. folder/sub-0001/t_sub-0001_2_mni.txt')
 
   cmdline.add_argument('inputs', help='Pattern for training subjects. Can either be a list of subject directories, in which case the -streamlines option is needed to specify the common suffix, or a list of *.tck files', nargs='+')
