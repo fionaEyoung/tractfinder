@@ -68,7 +68,7 @@ export PATH=$PATH:<path/to>/tractfinder/bin
 
 ### Tract atlases
 
-To use tractfinder, you'll need to get your hands on a set of TOD atlases! Contact fiona.young.15@ucl.ac.uk to get one, or download from somewhere online when they become publicly available.
+To use tractfinder, you'll need at least one tract orientation atlas! Atlases for the corticospinal tract, arcuate fasciculus, optic radiation and inferior fronto-occipital fasciculus are available here: https://zenodo.org/records/10149873
 You can also make your own atlases pretty easily! All you need is a dataset of streamlines, curated to your satisfaction, for at least 15 training subjects. Steps for creating custom atlases will be added soon.
 
 ### Basic usage
