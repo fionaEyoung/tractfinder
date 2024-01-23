@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+
+# Copyright (c) 2008-2023 the MRtrix3 contributors.
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# Covered Software is provided under this License on an "as is"
+# basis, without warranty of any kind, either expressed, implied, or
+# statutory, including, without limitation, warranties that the
+# Covered Software is free of defects, merchantable, fit for a
+# particular purpose or non-infringing.
+# See the Mozilla Public License v. 2.0 for more details.
+#
+# For more details, see http://www.mrtrix.org/.
+
+# Script for mapping fibre bundles based on provided tract orientation atlas[es]
+# Written by Fiona Young, 2023
+
+import os, shutil, copy
+from argparse import Action
+
+def usage(cmdline): #pylint: disable=unused-variable
+  from mrtrix3 import algorithm, app #pylint: disable=no-name-in-module, import-outside-toplevel
+
+  cmdline.set_author('Fiona Young (fiona.young.15@ucl.ac.uk)')
+  cmdline.set_synopsis('Create a tract orientation distribution (TOD) atlas from training streamlines')
+  cmdline.add_description('This command requires a list of training streamlines, which can be provided in one of two ways.')
+  cmdline.add_description('Option 1: Directly provide a list of streamlines as the first positional argument.')
+  cmdline.add_description('Option 2: Provide a list of subject prefixes as the first positional argument and the corresponding common suffix (same for all subjects) via the -streamlines option')
+  cmdline.add_description('In both cases streamlines may already be in template space, or a transform to template space can be provided via the -transform option.')
+  cmdline.add_description('The substitution keywords "IN, NAME, PRE, UNI" are supported for the -streamlines and -transform options, akin to the MRtrix3 "for_each" program. See "for_each -help" for more details. In addition to the for_each keywords, the additional keyword "ROOT" is supported, such that ROOT/NAME = IN (if IN is not already a directory)')
+
+  cmdline.add_example_usage('Directly provide list of streamline bundles in template space',
+                            f'{app.EXEC_NAME} folder/sub-*/my_tract_mni.tck my_tract_atlas.mif.gz',
+                            'If "folder" contains the subject directories "sub-001", "sub-002", ..., this will create an atlas from every existing file called "my_tract_mni.tck" in each subject directory.')
+  cmdline.add_example_usage('Provide list of subject directories and a streamline file pattern',
+                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract_mni.tck ',
+                            'Creates an atlas from every file matching folder/sub-*/my_tract_mni.tck')
+  cmdline.add_example_usage('Provide list of subject directories with streamline (in subject space) and transform file patterns',
+                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract.tck -transform IN/t_2_mni.txt',
+                            'Creates and atlas from every file matching folder/sub-*/my_tract.tck, after first transforming each bundle to template space using the corresponding affine transform folder/sub-*/t_2_mni.txt')
+  cmdline.add_example_usage('Provide list of subject directories with streamline (in subject space) and transform file patterns',
+                            f'{app.EXEC_NAME} folder/sub-* my_tract_atlas.mif.gz -streamlines IN/my_tract.tck -transform IN/t_sub-UNI_2_mni.txt',
+                            'As above, but allowing for subject specific file patterns, e.g. folder/sub-0001/t_sub-0001_2_mni.txt')
+
+  cmdline.add_argument('inputs', help='Pattern for training subjects. Can either be a list of subject directories, in which case the -streamlines option is needed to specify the common suffix, or a list of *.tck files', nargs='+')
+  cmdline.add_argument('output', help='Output atlas file')
+
+  # Options
+  cmdline.add_argument('-template', metavar='image', required=True, help='Template image in standard space, which defines the space and grid of the output atlas.')
+  cmdline.add_argument('-streamlines', metavar='pattern', help='Common suffix for streamline files.')
+  cmdline.add_argument('-transform', metavar='pattern', help='Common suffix for transform to standard space. Note that this transform should be in reverse convention, or the same that would be used to transform an image from subject to template space. Transform inversion for warping streamlines is handled by the command.')
+  cmdline.add_argument('-test', action='store_true', help='Output parsed streamline and transform file paths without any further processing.')
+  # Citations
+  cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
+
+def execute():
+  from mrtrix3 import MRtrixError, __version__
+  from mrtrix3 import app, image, path, run, fsl
+  from glob import glob
+
+  inputs = app.ARGS.inputs
+  if all([os.path.splitext(i)[1] == '.tck' for i in inputs]):
+    if app.ARGS.streamlines:
+      raise MRtrixError('Ambiguous usage: Cannot use -streamlines if all inputs are of filetype ".tck"')
+  elif not app.ARGS.streamlines:
+    raise MRtrixError('all inputs must be of filetype ".tck" if -streamlines not provided')
+  if app.ARGS.transform and not app.ARGS.template:
+    raise MRtrixError('-template is required alongside -transform')
+  app.check_output_path(app.ARGS.output)
+
+  # --- This is wholesale lifted from mrtrix3/bin/for_each --- #
+  common_prefix = os.path.commonprefix(inputs)
+  common_suffix = os.path.commonprefix([i[::-1] for i in inputs])[::-1]
+  app.debug('Common prefix: ' + common_prefix if common_prefix else 'No common prefix')
+  app.debug('Common suffix: ' + common_suffix if common_suffix else 'No common suffix')
+
+  class Entry(object):
+    def __init__(self, input_text):
+      self.input_text = input_text
+      self.sub_in = input_text
+      self.sub_root, self.sub_name = os.path.split(input_text.rstrip('/'))
+      self.sub_pre = os.path.splitext(self.sub_name.rstrip('.gz'))[0]
+      if common_suffix:
+        self.sub_uni = input_text[len(common_prefix):-len(common_suffix)]
+      else:
+        self.sub_uni = input_text[len(common_prefix):]
+
+      self.substitutions = { 'IN': self.sub_in, 'NAME': self.sub_name, 'PRE': self.sub_pre, 'UNI': self.sub_uni, 'ROOT': self.sub_root }
+      app.debug('Input text: ' + input_text)
+      app.debug('Substitutions: ' + str(self.substitutions))
+
+    def sub(self, str):
+      for (key, value) in self.substitutions.items():
+        str = str.replace(key, value)
+      return str
+
+    def get_safe_uni(self):
+      return self.sub_uni.replace(os.path.sep, '_')
+
+  items = [Entry(s) for s in inputs]
+
+  if app.ARGS.test:
+    app.console(f'Building atlas from {len(items)} streamline bundles in {"subject" if app.ARGS.transform else "template"} space:')
+    for i in items:
+      app.console(f'{i.sub_uni}:')
+      in_stream_path = i.sub(app.ARGS.streamlines) if app.ARGS.streamlines else i.sub_in
+      app.console(f'\t Streamlines path: {in_stream_path}')
+      if app.ARGS.transform:
+        app.console(f'\t Transform path: {i.sub(app.ARGS.transform)}')
+    return
+
+  app.make_scratch_dir()
+  app.goto_scratch_dir()
+
+  if app.ARGS.transform:
+    run.command(f'warpinit {path.from_user(app.ARGS.template)} wi.mif', show=False)
+
+  progress = app.ProgressBar('Converting streamlines to orientation distributions')
+  for i in items:
+    progress.increment()
+    stream_path = ''
+    v  = __version__.split('-',1)[0]
+    pi = 'pi' if v[0] >= '3' and 'RC' not in v else math.pi
+
+    in_stream_path = path.from_user(i.sub(app.ARGS.streamlines)) if app.ARGS.streamlines else path.from_user(i.sub_in)
+    if app.ARGS.transform:
+      stream_path = f'{i.get_safe_uni()}.tck'
+      # Assume transform is linear subject -> MNI
+      run.command(f'transformcalc {path.from_user(i.sub(app.ARGS.transform))} invert t_inv_{i.get_safe_uni()}.txt', show=False)
+      run.command(f'transformcompose t_inv_{i.get_safe_uni()}.txt wi.mif tck_warp.mif', show=False, force=True)
+      run.command(f'tcktransform {in_stream_path} tck_warp.mif {stream_path}', show=False)
+    elif app.ARGS.streamlines:
+      stream_path = in_stream_path
+    else:
+      stream_path = in_stream_path
+
+    ## TOD mapping
+    tod_path = f'{i.get_safe_uni()}_tod.mif'
+
+    # TODO: control for resolution
+    run.command(f'tckmap {stream_path} -tod 8 -template {path.from_user(app.ARGS.template)} {tod_path}', show=False)
+    # Normalise and remove nans
+    run.command(f'mrconvert -coord 3 0 {tod_path} - | '
+               +f'mrcalc {tod_path} - 4 {pi} -mult -sqrt -mult -div - | '
+               +f'mrcalc - -isnan 0 - -if {i.get_safe_uni()}_tod_norm.mif', show=False)
+    run.function(os.remove, tod_path, show=False)
+
+
+  progress.increment('Generating atlas')
+  # Average them!
+  run.command(['mrmath'] + glob('*tod_norm.mif') + ['mean', path.from_user(app.ARGS.output)], force=app.FORCE_OVERWRITE, show=False)
+  progress.done()
+
+# Execute the script
+import mrtrix3
+mrtrix3.execute() #pylint: disable=no-member
