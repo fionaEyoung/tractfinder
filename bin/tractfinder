@@ -51,7 +51,7 @@ def usage(cmdline): #pylint: disable=unused-variable
   cmdline.flag_mutually_exclusive_options( ['transform', 'struct'], required=True )
   common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
   common_options.add_argument('-suffix', default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only in directory input/output mode) (default: {MAP_SUFFIX}')
-  common_options.add_argument('-nii', '-nii.gz', nargs=0, action=StoreGiven, dest='fmt', default='mif', help='write output files in NIfTI format instead of .mif (valid only for directory input / output)')
+  common_options.add_argument('-nii', '-nii.gz', '-mif.gz', nargs=0, action=StoreGiven, dest='fmt', default='mif', help='write output files in NIfTI or compressed MRtrix3 format instead of the default .mif (valid only for directory input/output)')
 
   # Citations
   cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
@@ -82,6 +82,12 @@ def make_dir(path):
       raise MRtrixError('Path \'' + path + '\' exists and is not a directory')
     app.debug('Directory \'' + path + '\' already exists')
 
+# Have defined this, rather than make use of pathlib for full 3.x compatibility
+def pure_stem(pathstr):
+  stem, ext = os.path.splitext(os.path.basename(pathstr))
+  while ext: stem, ext = os.path.splitext(stem)
+  return stem
+
 def execute():
   from mrtrix3 import MRtrixError
   from mrtrix3 import app, image, path, run, fsl
@@ -104,7 +110,7 @@ def execute():
           if h.is_sh(): atlas_paths.append(p)
           else: app.console('Skipping non-SH input file \'' + h.name() + '\'')
         except MRtrixError: pass
-      output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + app.ARGS.suffix + f'.{app.ARGS.fmt}') for in_path in atlas_paths]
+      output_paths = [os.path.join(dest, pure_stem(in_path) + app.ARGS.suffix + f'.{app.ARGS.fmt}') for in_path in atlas_paths]
       for i, p in reversed(list(enumerate(copy.copy(output_paths)))):
         try: app.check_output_path(p)
         except MRtrixError:
@@ -114,6 +120,8 @@ def execute():
         finally:
           if not (atlas_paths and output_paths):
             raise MRtrixError('No new outputs to create (use -force to overwrite contents of output directory) \'' + dest + '\'')
+          if not len(set(output_paths)) == len(output_paths):
+            raise MRtrixError('Non-unique atlas filenames present (after removing extensions). Could not create unique output filenames')
       app.debug(f'Creating {len(output_paths)} new files')
     else:
       app.check_output_path(dest)
