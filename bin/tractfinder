@@ -23,9 +23,12 @@ from argparse import Action
 
 MAP_SUFFIX = '_tractmap'
 DOF = 12
+_GIT_VERSION = 'unknown'
 
 def usage(cmdline): #pylint: disable=unused-variable
   from mrtrix3 import app #pylint: disable=no-name-in-module, import-outside-toplevel
+  global _GIT_VERSION
+  _GIT_VERSION = cmdline._git_version # cheeky
 
   cmdline.set_author('Fiona Young (fiona.young.15@ucl.ac.uk)')
   cmdline.set_synopsis('Map fibre bundles based on tract orientation atlas(es)')
@@ -90,7 +93,8 @@ def pure_stem(pathstr):
 
 def execute():
   from mrtrix3 import MRtrixError
-  from mrtrix3 import app, image, path, run, fsl
+  from mrtrix3 import app, image, path, run, fsl, sys, __version__
+  cmdstring = ' '.join(sys.argv) + f' (tractfinder version={_GIT_VERSION}, mrtrix version={__version__}) '
 
   atlas_paths = []
   output_paths = []
@@ -218,12 +222,11 @@ def execute():
     progress.increment()
     # Compute inner product
     ip_command_string = (f'mrcalc -quiet atlas_{i}.mif ' + path.from_user(app.ARGS.input) + ' -mult - | '
-                         +'mrmath -quiet - sum -axis 3 ')
+                         +'mrmath -quiet - sum -axis 3 - | ')
     if app.ARGS.binary:
       app.console(f'Binarising output with threshold {app.ARGS.binary}')
-      ip_command_string += f' - | mrthreshold -abs {app.ARGS.binary} - {path.from_user(output_path)}'
-    else:
-      ip_command_string += path.from_user(output_path)
+      ip_command_string += f'mrthreshold -abs {app.ARGS.binary} - - | '
+    ip_command_string += f'mrconvert - {path.from_user(output_path)} -set_property command_history "{cmdstring}"'
     run.command(ip_command_string, show=False, force=app.FORCE_OVERWRITE)
 
     i += 1
