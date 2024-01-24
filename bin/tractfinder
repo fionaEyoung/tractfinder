@@ -46,17 +46,18 @@ def usage(cmdline): #pylint: disable=unused-variable
   # General options
   common_options = cmdline.add_argument_group('General tractfinder options')
   common_options.add_argument('-transform', help='provide transformation from atlas space to subject space')
-  common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space')
+  common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space, and the template image is assumed to be masked')
   common_options.add_argument('-premasked', action='store_true', help='indicate that the input structural image has been brain masked (otherwise script will perform brain extraction.) Note: the structural image in template space is ALWAYS assumed to be masked')
   cmdline.flag_mutually_exclusive_options( ['transform', 'struct'], required=True )
   common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
-  common_options.add_argument('-suffix', nargs=1, default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only atlas directory as input) (default: {MAP_SUFFIX}')
+  common_options.add_argument('-suffix', default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only in directory input/output mode) (default: {MAP_SUFFIX}')
   common_options.add_argument('-nii', '-nii.gz', nargs=0, action=StoreGiven, dest='fmt', default='mif', help='write output files in NIfTI format instead of .mif (valid only for directory input / output)')
 
   # Citations
   cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
   cmdline.add_citation('Nowinski, W. L., & Belov, D. (2005). Toward atlas-assisted automatic interpretation of MRI morphological brain scans in the presence of tumor. Academic radiology, 12(8), 1049–1057. https://doi.org/10.1016/j.acra.2005.04.018')
   cmdline.add_citation('Jenkinson, M., Bannister, P., Brady, J. M. and Smith, S. M. Improved Optimisation for the Robust and Accurate Linear Registration and Motion Correction of Brain Images. NeuroImage, 17(2), 825-841, 2002.', condition='If performing registration (i.e. -linear option not provided)', is_external=True)
+  cmdline.add_citation('Smith, S. M. Fast robust automated brain extraction. Human Brain Mapping, 17(3), 143-155, 2002.', condition='If relying on the script to generate a brain mask (either for registration or tumour deformation modelling)', is_external=True)
 
 # Custom argparse action for detecting which option string provided
 # and storing that as argument value
