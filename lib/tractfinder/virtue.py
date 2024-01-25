@@ -124,7 +124,6 @@ def simplify_vol(vol, convex_hull=True, largest_object=True):
     ll = measure.label(vol)
     cc = measure.regionprops(ll)
     i = np.argmax([r.area for r in cc])
-    x, y, z  = cc[i].centroid
 
     if largest_object:
         out = (ll== (1+i))
@@ -135,7 +134,7 @@ def simplify_vol(vol, convex_hull=True, largest_object=True):
                 cc[i].bbox[1]:cc[i].bbox[4],
                 cc[i].bbox[2]:cc[i].bbox[5]] = cc[i].convex_image
 
-    return out, (x, y, z)
+    return out, cc[i].centroid
 
 
 
@@ -170,8 +169,7 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
 
     # Largest tumour component and centre point S
     tumour_modif, S = simplify_vol(tumour_mask, convex_hull=convex_tumour)
-    if S_override is not None:
-        S = S_override
+    if S_override is not None: S = S_override
 
     app.debug(f"Tumour seed voxel: {S}")
 
