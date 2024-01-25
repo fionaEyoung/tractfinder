@@ -23,9 +23,12 @@ from argparse import Action
 
 MAP_SUFFIX = '_tractmap'
 DOF = 12
+_GIT_VERSION = 'unknown'
 
 def usage(cmdline): #pylint: disable=unused-variable
   from mrtrix3 import app #pylint: disable=no-name-in-module, import-outside-toplevel
+  global _GIT_VERSION
+  _GIT_VERSION = cmdline._git_version # cheeky
 
   cmdline.set_author('Fiona Young (fiona.young.15@ucl.ac.uk)')
   cmdline.set_synopsis('Map fibre bundles based on tract orientation atlas(es)')
@@ -52,18 +55,19 @@ def usage(cmdline): #pylint: disable=unused-variable
   # General options
   common_options = cmdline.add_argument_group('General tractfinder options')
   common_options.add_argument('-transform', help='provide transformation from atlas space to subject space')
-  common_options.add_argument('-struct', metavar=('template', 'subject'), nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space')
+  common_options.add_argument('-struct', metavar='template subject', nargs=2, help='provide structural images in template (=atlas) and subject space for coregistration. Note: the subject image is assumed to be adequately coregistered with the diffusion space, and the template image is assumed to be masked')
   common_options.add_argument('-premasked', action='store_true', help='indicate that the input structural image has been brain masked (otherwise script will perform brain extraction.) Note: the structural image in template space is ALWAYS assumed to be masked')
   common_options.add_argument('-brain_mask', metavar='image', help='Provide brain mask. If not provided, will attempt to estimate brain mask based on input FOD image (this is flakey!)')
   common_options.add_argument('-binary', nargs='?', const=0.05,  help='threshold tractmap to binary segmentation (default value: 0.05)')
-  common_options.add_argument('-suffix', nargs=1, default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only atlas directory as input) (default: {MAP_SUFFIX}')
+  common_options.add_argument('-suffix', default=MAP_SUFFIX, help=f'define a suffix to append to each output (relevant only in directory input/output mode) (default: {MAP_SUFFIX}')
   common_options.add_argument('-template', help='Provide a template image to define the voxel grid of the output maps/segmentations. By default, the grid of the FOD input is used.')
-  common_options.add_argument('-nii', '-nii.gz', nargs=0, action=StoreGiven, dest='fmt', default='mif', help='write output files in NIfTI format instead of .mif (valid only for directory input / output)')
+  common_options.add_argument('-nii', '-nii.gz', '-mif.gz', nargs=0, action=StoreGiven, dest='fmt', default='mif', help='write output files in NIfTI or compressed MRtrix3 format instead of the default .mif (valid only for directory input/output)')
 
   # Citations
   cmdline.add_citation('Young, F., Aquilina, K., A Clark, C., & D Clayden, J. (2022). Fibre tract segmentation for intraoperative diffusion MRI in neurosurgical patients using tract-specific orientation atlas and tumour deformation modelling. International journal of computer assisted radiology and surgery, 17(9), 1559–1567. https://doi.org/10.1007/s11548-022-02617-z')
   cmdline.add_citation('Nowinski, W. L., & Belov, D. (2005). Toward atlas-assisted automatic interpretation of MRI morphological brain scans in the presence of tumor. Academic radiology, 12(8), 1049–1057. https://doi.org/10.1016/j.acra.2005.04.018')
   cmdline.add_citation('Jenkinson, M., Bannister, P., Brady, J. M. and Smith, S. M. Improved Optimisation for the Robust and Accurate Linear Registration and Motion Correction of Brain Images. NeuroImage, 17(2), 825-841, 2002.', condition='If performing registration (i.e. -transform option not provided)', is_external=True)
+  cmdline.add_citation('Smith, S. M. Fast robust automated brain extraction. Human Brain Mapping, 17(3), 143-155, 2002.', condition='If relying on the script to generate a brain mask (either for registration or tumour deformation modelling)', is_external=True)
 
 # Custom argparse action for detecting which option string provided
 # and storing that as argument value
@@ -96,11 +100,18 @@ def check_from_required(parser, args_in, required_args):
   if not count:
     parser.error('One of the following options must be provided: ' + ', '.join([ '-' + o for o in required_args ]))
 
+# Have defined this, rather than make use of pathlib for full 3.x compatibility
+def pure_stem(pathstr):
+  stem, ext = os.path.splitext(os.path.basename(pathstr))
+  while ext: stem, ext = os.path.splitext(stem)
+  return stem
+
 def execute():
   from mrtrix3 import MRtrixError
-  from mrtrix3 import algorithm, app, image, path, run, fsl
+  from mrtrix3 import app, image, path, run, fsl, sys, __version__
   if app.ARGS.tumour:
     from tractfinder import virtue
+  cmdstring = ' '.join(sys.argv) + f' (tractfinder version={_GIT_VERSION}, mrtrix version={__version__}) '
 
   if not app.ARGS.deformation_only:
     check_from_required(app.CMDLINE, app.ARGS, ['transform', 'struct'])
@@ -136,7 +147,7 @@ def execute():
           if h.is_sh(): atlas_paths.append(p)
           else: app.console('Skipping non-SH input file \'' + h.name() + '\'')
         except MRtrixError: pass
-      output_paths = [os.path.join(dest, os.path.splitext(os.path.basename(in_path))[0] + app.ARGS.suffix + f'.{app.ARGS.fmt}') for in_path in atlas_paths]
+      output_paths = [os.path.join(dest, pure_stem(in_path) + app.ARGS.suffix + f'.{app.ARGS.fmt}') for in_path in atlas_paths]
       for i, p in reversed(list(enumerate(copy.copy(output_paths)))):
         try: app.check_output_path(p)
         except MRtrixError:
@@ -146,6 +157,8 @@ def execute():
         finally:
           if not (atlas_paths and output_paths):
             raise MRtrixError('No new outputs to create (use -force to overwrite contents of output directory) \'' + dest + '\'')
+          if not len(set(output_paths)) == len(output_paths):
+            raise MRtrixError('Non-unique atlas filenames present (after removing extensions). Could not create unique output filenames')
       app.debug(f'Creating {len(output_paths)} new files')
     else:
       app.check_output_path(dest)
@@ -295,16 +308,15 @@ def execute():
     progress.increment()
 
     # Compute inner product
-    ip_command_string = (f'mrcalc atlas_{i}.mif {path.from_user(app.ARGS.input)} -mult - | '
-                         +'mrmath - sum -axis 3 ')
+    ip_command_string = (f'mrcalc -quiet atlas_{i}.mif {path.from_user(app.ARGS.input)} -mult - | '
+                         +'mrmath -quiet - sum -axis 3 - | ')
     if app.ARGS.template:
       app.console(f'Regridding output to match template image "{app.ARGS.template}"')
-      ip_command_string += f'- | mrgrid - regrid -template {path.from_user(app.ARGS.template)} '
+      ip_command_string += f'mrgrid - regrid -template {path.from_user(app.ARGS.template)} - | '
     if app.ARGS.binary:
       app.console(f'Binarising output with threshold {app.ARGS.binary}')
-      ip_command_string += f'- | mrthreshold - -abs {app.ARGS.binary} '
-    # Finally append the output file to command
-    ip_command_string += path.from_user(output_path)
+      ip_command_string += f'mrthreshold -abs {app.ARGS.binary} - - | '
+    ip_command_string += f'mrconvert - {path.from_user(output_path)} -set_property command_history "{cmdstring}"'
     run.command(ip_command_string, show=False, force=app.FORCE_OVERWRITE)
     i += 1
 
