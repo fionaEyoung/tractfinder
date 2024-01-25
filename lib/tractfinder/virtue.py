@@ -182,13 +182,12 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
     Ft, Vt, Ct = surf_from_vol(tumour_modif, sigma=2, target_nfaces=1000)
     # Brain surface and face centroids
     Fb, Vb, Cb = surf_from_vol(brain_mask, sigma=2, target_nfaces=5000)
-
     # Variables
     SP = P-S
     Dp = np.linalg.norm(SP, axis=1)
     e  = SP / Dp[:, np.newaxis] # Damn you np broadcasting
-    SCb = Cb - S
-    SCt = Ct - S
+    SCb = (Cb - S).astype(np.single)
+    SCt = (Ct - S).astype(np.single)
     Dbc = np.linalg.norm(SCb, axis=1)
     Dtc = np.linalg.norm(SCt, axis=1)
 
@@ -209,8 +208,8 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
         # TODO: !! MAGIC NUMBER !!
         n = 400;
         d_theta = 2*np.pi/n
-        az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n),
-                              np.linspace(0, np.pi, int(n/2)),
+        az, pol = np.meshgrid(np.linspace(-np.pi, np.pi, n, dtype=np.single),
+                              np.linspace(0, np.pi, int(n/2), dtype=np.single),
                               indexing="ij")
 
         if Db is None:
@@ -221,8 +220,8 @@ def compute_radial_deformation(imshape, tumour_mask, brain_mask,
 
             # Compute angles between gridded angles and brain hull centroids
             PHI =  ang( AZ_[None,:], EL_[None,:],
-                        az.reshape((-1,1)), pol.reshape((-1,1))
-                        ).reshape((n,n//2,-1))
+                        az.reshape((-1,1)), pol.reshape((-1,1)),
+                        dtype=np.single).reshape((n,n//2,-1))
             # Closest brain hull triangle for each angular interval and lookuptable for
             # Db for evenly spaced angles
             distances = Dbc[PHI.argmin(axis=2)]

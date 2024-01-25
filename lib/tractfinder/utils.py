@@ -10,8 +10,9 @@ def info(text):
 ## Utility functions for angles and coordinates
 
 # Quick util function for getting angle between two polar points
-def ang(azA, polA, azB, polB):
-  return np.arccos( np.sin(polA)*np.sin(polB)*np.cos(azA-azB) + np.cos(polA)*np.cos(polB) )
+def ang(azA, polA, azB, polB, dtype=None):
+  return np.arccos( np.sin(polA, dtype=dtype)*np.sin(polB, dtype=dtype)*np.cos(azA-azB, dtype=dtype)
+                  + np.cos(polA, dtype=dtype)*np.cos(polB, dtype=dtype), dtype=dtype )
 
 def c2s(*args):
     # Arguments supplied as single Nx3 array
