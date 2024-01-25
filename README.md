@@ -133,14 +133,14 @@ tractfinder_output/
 ### Tumour deformation
 
 The tumour deformation functionality is currently under development, and may not be stable.
-To use it, checkout the `deformation_modelling` branch:
+To use it, checkout the development (`dev`) branch:
 
 ```bash
 cd tractfinder
-git checkout deformation_modelling
+git checkout dev
 ```
 
-Full user guide [here](https://github.com/fionaEyoung/tractfinder/tree/deformation_modelling#tumour-deformation).
+Full user guide [here](https://github.com/fionaEyoung/tractfinder/tree/dev#tumour-deformation-modelling).
 
 ### Shell script [legacy]
 
