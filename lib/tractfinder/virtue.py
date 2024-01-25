@@ -35,7 +35,7 @@ def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
       Db, Dt = lookups_zipped['Db'], lookups_zipped['Dt']
       try:
         s = tuple(lookups_zipped['shape'])
-        if not s == Db.shape == Dt.shape:
+        if not (s == imshape and np.prod(imshape) == Db.size == Dt.size):
           Dt, Db = None, None
       except KeyError:
         if not np.prod(imshape) == Db.size == Dt.size:
@@ -59,8 +59,13 @@ def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
   # All defaults
   D = compute_radial_deformation(imshape, tumour, brain.data, Db=Db, Dt=Dt, **kwargs)
 
+  l = kwargs.get('expon')
+  k = 'exponential ' if l else 'linear'
+  if l == -1: k += '(adaptive)'
+  elif kwargs.get('expon_const'): k += f'(lambda = {l})'
+  elif l: k += f'(adaptive, lambda_min = {l})'
   out = Image.empty_as(brain)
-
+  out.comments = [f"scale factor: {kwargs.get('squish', 1)}", f"deformation factor: {k}"]
   # Black magic that apparently I wrote
   # Convert deformation values from voxel coords to scanner coordinates (mm)
   # and reshape to voxel array

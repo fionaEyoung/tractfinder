@@ -48,7 +48,8 @@ def usage(cmdline): #pylint: disable=unused-variable
                                                          + 'the provided value imposes an upper bound on the dynamically determined lambda. '
                                                          + 'When using -k exponential_constant, lambda is globally set to the given value. '
                                                          + 'Note that in the latter case, a high value may result in weak deformation and the strictly '
-                                                         + 'non-infiltrating condition may be violated (see Young et al. 2022 for further explanation).'))
+                                                         + 'non-infiltrating condition may be violated (see Young et al. 2022 for further explanation).'),
+                                                         default=-1, type=float)
   virtue_options.add_argument('-deformation_field', metavar='image', help='Store computed tumour deformation field.')
   virtue_options.add_argument('-deformation_only', action='store_true', help='Only compute tumour deformation modelling, then exit.')
 
@@ -171,6 +172,7 @@ def execute():
       app.check_output_path(p)
 
   if app.ARGS.distance_lookup: make_dir(app.ARGS.distance_lookup)
+  if app.ARGS.deformation_field: app.check_output_path(app.ARGS.deformation_field)
 
   ## Set up filenames and command strings
   bet_cmd = fsl.exe_name('bet')
@@ -246,12 +248,13 @@ def execute():
               + f'-template {mask_image_def} -interp nearest -datatype bit', show=False)
 
     virtue.entry_point(tumour_mask, mask_image_def, def_field_image,
-                       expon=-1 if app.ARGS.k=='exponential' else None,
+                       expon=None if app.ARGS.k=='linear' else app.ARGS.l,
+                       expon_const=app.ARGS.k=='exponential_constant',
                        squish=app.ARGS.scale,
                        save_lookup=path.from_user(app.ARGS.distance_lookup) if app.ARGS.distance_lookup else None)
     if app.ARGS.deformation_field:
       # Convert instead of move, incase different format requested
-      run.command(f'mrconvert {def_field_image} {path.from_user(app.ARGS.deformation_field)}', force=app.FORCE_OVERWRITE)
+      run.command(f'mrconvert {def_field_image} {path.from_user(app.ARGS.deformation_field)} -set_property command_history "{cmdstring}"', force=app.FORCE_OVERWRITE, show=False)
     if app.ARGS.deformation_only:
       return
 
